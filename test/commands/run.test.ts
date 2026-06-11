@@ -1,3 +1,6 @@
+import { readFile, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../../src/gh.js", () => ({
@@ -538,6 +541,42 @@ describe("runCommand", () => {
 
       expect(result).toContain("job-specific log output");
       expect(result).toContain('run: "555"');
+    });
+
+    it("keeps the tail of oversized logs and saves the full log to a file", async () => {
+      const head = "HEAD-MARKER setup noise\n";
+      const tail = "\nnot ok 12 - spawned poll announces the wait TAIL-MARKER";
+      const output = head + "x".repeat(25000) + tail;
+      mockedGhExec.mockResolvedValue(output);
+
+      const result = await runCommand(
+        ["view", "100", "--log-failed", "--job", "555"],
+        ctx,
+      );
+
+      expect(result).toContain("truncated: true");
+      expect(result).toContain(`original_length: ${output.length}`);
+      expect(result).toContain("TAIL-MARKER");
+      expect(result).not.toContain("HEAD-MARKER");
+
+      const fullLogPath = result.match(/^\s*full_log: "?([^"\n]+)"?$/m)?.[1];
+      expect(fullLogPath).toBeDefined();
+      expect(fullLogPath).toContain(join(tmpdir(), "gh-axi-logs-"));
+      expect(fullLogPath).toContain("100-job-555-log-failed.log");
+      expect(result).toContain(`full_log: ${fullLogPath}`);
+      expect(result).toContain("help[1]:");
+      expect(result).toContain("Output shows the last 20000 of");
+      await expect(readFile(fullLogPath!, "utf8")).resolves.toBe(output);
+      expect((await stat(dirname(fullLogPath!))).mode & 0o777).toBe(0o700);
+      expect((await stat(fullLogPath!)).mode & 0o777).toBe(0o600);
+    });
+
+    it("does not save a log file when output fits within the limit", async () => {
+      mockedGhExec.mockResolvedValue("short log\n");
+      const result = await runCommand(["view", "100", "--log"], ctx);
+      expect(result).toContain("truncated: false");
+      expect(result).not.toContain("full_log:");
+      expect(result).not.toContain("help[");
     });
 
     it("passes --job to gh CLI in log-failed job-only mode", async () => {
