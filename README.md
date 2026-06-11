@@ -14,6 +14,24 @@ GitHub CLI for agents — designed with [AXI](https://github.com/kunchenguid/axi
 Wraps the official `gh` cli with token-efficient TOON output, contextual next-step suggestions, and structured error handling.
 Built for autonomous agents that interact with GitHub via shell execution.
 
+## Benchmarks
+
+Agent ergonomics is measurable.
+The [axi benchmark](https://axi.md) runs the same 17 real-world GitHub tasks (issue triage, PR review prep, CI failure investigation, and more) through 5 GitHub interface setups - 5 repeats each, with `claude-sonnet-4-6` as the agent and an LLM judge scoring task success.
+
+gh-axi posts the lowest input tokens, cost, and duration of all 5 conditions, and is the only one to pass every run:
+
+| Condition                  | Avg Input Tokens | Avg Cost/Task | Avg Duration | Avg Turns | Success  |
+| -------------------------- | ---------------- | ------------- | ------------ | --------- | -------- |
+| **gh-axi**                 | **46,462**       | **$0.050**    | **15.7s**    | **3**     | **100%** |
+| gh CLI (raw)               | 47,076           | $0.054        | 17.4s        | 3         | 86%      |
+| GitHub MCP code execution  | 137,409          | $0.101        | 43.4s        | 7         | 84%      |
+| GitHub MCP + ToolSearch    | 153,621          | $0.147        | 41.1s        | 8         | 82%      |
+| GitHub MCP (eager schemas) | 175,757          | $0.148        | 34.2s        | 6         | 87%      |
+
+Against raw `gh` - the very CLI this tool wraps - that is 100% vs 86% task success at 7% lower cost.
+Against the GitHub MCP server it is 66% cheaper, with 74% fewer input tokens and half the turns.
+
 ## Quick Start
 
 Install the gh-axi skill in the [Agent Skills](https://agentskills.io) format with [`npx skills`](https://github.com/vercel-labs/skills):
