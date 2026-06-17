@@ -30,12 +30,12 @@ export const TOP_HELP = `usage: gh-axi [command] [args] [flags]
 commands[11]:
   (none)=dashboard, issue, pr, run, workflow, release, repo, label, search, api, setup
 flags[3]:
-  -R/--repo <OWNER/NAME> (after command), --help, -v/-V/--version
+  -R/--repo <OWNER/NAME> (after command), accepts space or equals form, --help, -v/-V/--version
 examples:
   gh-axi
   gh-axi issue list --state open
   gh-axi issue list -R owner/name
-  gh-axi issue list --repo owner/name
+  gh-axi issue list --repo=owner/name
   gh-axi pr view 42
   gh-axi setup hooks
 `;
@@ -128,6 +128,11 @@ function parseRepoContextArgs(
       continue;
     }
 
+    if (arg.startsWith("-R=") && arg.length > 3) {
+      repoFlag = arg.slice(3);
+      continue;
+    }
+
     if (arg === "--repo" && index + 1 < args.length) {
       const value = args[index + 1];
 
@@ -138,6 +143,16 @@ function parseRepoContextArgs(
       }
 
       index++;
+      continue;
+    }
+
+    if (arg.startsWith("--repo=") && arg.length > "--repo=".length) {
+      repoFlag = arg.slice("--repo=".length);
+
+      if (command === "search") {
+        stripped.push(arg);
+      }
+
       continue;
     }
 
