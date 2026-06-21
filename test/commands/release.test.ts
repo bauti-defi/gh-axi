@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { vi, describe, it, expect, beforeEach } from "vitest";
 
 vi.mock("../../src/gh.js", () => ({
@@ -20,6 +23,20 @@ const ctx: RepoContext = {
   nwo: "octo/repo",
   source: "flag",
 };
+
+async function withBodyFile<T>(
+  body: string,
+  fn: (file: string) => Promise<T>,
+): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "gh-axi-release-body-"));
+  try {
+    const file = join(dir, "notes.md");
+    writeFileSync(file, body, "utf8");
+    return await fn(file);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe("releaseCommand", () => {
   beforeEach(() => {
@@ -242,6 +259,112 @@ describe("releaseCommand", () => {
       await releaseCommand(["create", "v1.0.0", "--target", "main"], ctx);
 
       expect(mockedGhExec).toHaveBeenCalledWith(expect.any(Array), ctx);
+    });
+
+    it("maps --body-file to release notes", async () => {
+      await withBodyFile("release\nnotes\n", async (file) => {
+        await releaseCommand(
+          ["create", "v1.0.0", "--body-file", file, "dist/app.zip"],
+          ctx,
+        );
+
+        expect(mockedGhExec).toHaveBeenCalledWith(
+          [
+            "release",
+            "create",
+            "v1.0.0",
+            "--notes",
+            "release\nnotes\n",
+            "dist/app.zip",
+          ],
+          ctx,
+        );
+      });
+    });
+
+    it("rejects --body-file with --notes-file", async () => {
+      await withBodyFile("release notes", async (file) => {
+        await expect(
+          releaseCommand(
+            [
+              "create",
+              "v1.0.0",
+              "--body-file",
+              file,
+              "--notes-file",
+              "notes.md",
+            ],
+            ctx,
+          ),
+        ).rejects.toThrow(/Use only one release notes source/);
+        expect(mockedGhExec).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe("edit", () => {
+    beforeEach(() => {
+      mockedGhExec.mockResolvedValue("");
+    });
+
+    it("maps --body-file to release notes", async () => {
+      await withBodyFile("updated\nnotes\n", async (file) => {
+        await releaseCommand(["edit", "v1.0.0", "--body-file", file], ctx);
+
+        expect(mockedGhExec).toHaveBeenCalledWith(
+          ["release", "edit", "v1.0.0", "--notes", "updated\nnotes\n"],
+          ctx,
+        );
+      });
+    });
+
+    it("forwards --notes-file", async () => {
+      await releaseCommand(["edit", "v1.0.0", "--notes-file", "notes.md"], ctx);
+
+      expect(mockedGhExec).toHaveBeenCalledWith(
+        ["release", "edit", "v1.0.0", "--notes-file", "notes.md"],
+        ctx,
+      );
+    });
+
+    it("forwards short notes aliases", async () => {
+      await releaseCommand(["edit", "v1.0.0", "-n", "updated notes"], ctx);
+
+      expect(mockedGhExec).toHaveBeenCalledWith(
+        ["release", "edit", "v1.0.0", "--notes", "updated notes"],
+        ctx,
+      );
+    });
+
+    it("forwards short notes-file aliases", async () => {
+      await releaseCommand(["edit", "v1.0.0", "-F", "notes.md"], ctx);
+
+      expect(mockedGhExec).toHaveBeenCalledWith(
+        ["release", "edit", "v1.0.0", "--notes-file", "notes.md"],
+        ctx,
+      );
+    });
+
+    it("rejects --body-file with --notes-file", async () => {
+      await withBodyFile("updated notes", async (file) => {
+        await expect(
+          releaseCommand(
+            ["edit", "v1.0.0", "--body-file", file, "--notes-file", "notes.md"],
+            ctx,
+          ),
+        ).rejects.toThrow(/Use only one release notes source/);
+        expect(mockedGhExec).not.toHaveBeenCalled();
+      });
+    });
+
+    it("does not consume --notes-file as --body text", async () => {
+      await expect(
+        releaseCommand(
+          ["edit", "v1.0.0", "--body", "--notes-file", "notes.md"],
+          ctx,
+        ),
+      ).rejects.toThrow("--body requires text");
+      expect(mockedGhExec).not.toHaveBeenCalled();
     });
   });
 
