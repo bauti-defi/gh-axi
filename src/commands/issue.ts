@@ -5,6 +5,7 @@ import { getSuggestions } from "../suggestions.js";
 import {
   hasFlag,
   getFlag,
+  getAllFlags,
   getPositional,
   requireNumber,
   takeFlag,
@@ -62,7 +63,7 @@ flags{list}:
 flags{view}:
   --comments, --full (show complete body without truncation)
 flags{create}:
-  --title <text> (required), --body <text> or --body-file <path>, --assignee <login>, --label <name>, --milestone <name>, --type <name>
+  --title <text> (required), --body <text> or --body-file <path>, --assignee <login>, --label <name> (repeatable), --milestone <name>, --type <name>
 flags{edit}:
   --title, --body <text> or --body-file <path>, --add-label, --remove-label, --add-assignee, --remove-assignee, --milestone, --type <name>, --no-type
 flags{close}:
@@ -473,7 +474,7 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
 
   const body = takeBody(args);
   const assignee = getFlag(args, "--assignee");
-  const label = getFlag(args, "--label");
+  const labels = getAllFlags(args, "--label");
   const milestone = getFlag(args, "--milestone");
   const project = getFlag(args, "--project");
   const typeName = getOptionalRequiredFlag(args, "--type");
@@ -487,7 +488,7 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
   const ghArgs = ["issue", "create", "--title", title];
   if (body !== undefined) ghArgs.push("--body", body);
   if (assignee) ghArgs.push("--assignee", assignee);
-  if (label) ghArgs.push("--label", label);
+  for (const l of labels) ghArgs.push("--label", l);
   if (milestone) ghArgs.push("--milestone", milestone);
   if (project) ghArgs.push("--project", project);
 
