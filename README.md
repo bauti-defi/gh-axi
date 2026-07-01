@@ -46,7 +46,7 @@ You still need [`gh`](https://cli.github.com/) installed and authenticated via `
 
 The skill is not a user-facing slash command (`user-invocable: false`).
 Its frontmatter also includes Hermes Agent metadata (`metadata.hermes`) so Hermes can categorize it as a `devops` skill for GitHub, git, CI, pull requests, and releases.
-Just ask for anything that touches GitHub - filing issues, reviewing PRs, checking CI runs, cutting releases - and the agent loads the skill on its own when it recognizes the task.
+Just ask for anything that touches GitHub - filing issues, reviewing PRs, checking CI runs, cutting releases, or managing GitHub Actions secrets and variables - and the agent loads the skill on its own when it recognizes the task.
 
 `-g` installs the skill for all projects (`~/.claude/skills/`, for example); drop it to install for the current project only (`.claude/skills/`).
 
@@ -88,17 +88,24 @@ gh-axi run list -R owner/repo   # list workflow runs for a specific repo
 gh-axi run view 123456 --job 789012       # inspect a single job within a run
 gh-axi run view --job 789012 --log-failed # show failed log lines for one job
 gh-axi workflow run ci.yml --ref main     # trigger a workflow
+echo -n "sk-..." | gh-axi secret set OPENAI_API_KEY  # set a secret from stdin
+gh-axi variable set NODE_ENV --body production        # set a variable from a flag
 gh-axi setup hooks              # install optional agent session hooks
 gh-axi update --check           # check whether a newer release exists
 gh-axi update                   # upgrade a global install
 ```
 
-For multi-line issue, PR, review, or comment text, write Markdown to a UTF-8 file and pass `--body-file <path>` anywhere `--body` is accepted.
+For multi-line issue, PR, review, or comment text, write Markdown to a UTF-8 file and pass `--body-file <path>` on the relevant command.
 For releases, `--body` and `--body-file` are aliases for release notes, alongside `--notes` and `--notes-file`.
+For multi-line variable values, pipe stdin to `gh-axi variable set <name>`; `--body`/`-b` is for inline values only.
 
 Long `run view --log` and `run view --log-failed` output shows the last 20,000 characters so CI failures stay visible.
 When truncation happens, gh-axi best-effort saves the complete log to a temp file, includes it as `full_log`, and prints a `help:` hint telling agents to grep that file for earlier context.
 `gh-axi run` manages existing workflow runs; use `gh-axi workflow run <name> --ref <ref>` to trigger (dispatch) a workflow.
+
+`gh-axi secret set <name>` reads the value only from piped stdin because secret flags would be visible in the `gh-axi` process argv.
+`gh-axi secret list` never prints values, matching `gh secret list`.
+`gh-axi variable` accepts `--body`/`-b` or piped stdin, and variable values are shown in `list` output because variables are not secret.
 
 ### Commands
 
@@ -111,6 +118,8 @@ When truncation happens, gh-axi best-effort saves the complete log to a temp fil
 | `release`  | Releases — list, view, create, edit, delete                                 |
 | `repo`     | Repositories — list, view, create, edit, clone, fork                        |
 | `label`    | Labels — list, create, edit, delete                                         |
+| `secret`   | Actions secrets — list, set, delete                                         |
+| `variable` | Actions variables — list, set, delete                                       |
 | `search`   | Search issues, PRs, repos, commits, code                                    |
 | `api`      | Raw GitHub API access                                                       |
 | `setup`    | Install optional agent session hooks                                        |

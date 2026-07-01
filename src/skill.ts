@@ -4,9 +4,9 @@ import { DESCRIPTION, TOP_HELP } from "./cli.js";
 // Kept terse and outcome-focused so it fires on "needs GitHub" intents.
 export const SKILL_DESCRIPTION =
   "Operate GitHub through the gh-axi CLI - issues, pull requests, workflow runs, workflows, " +
-  "releases, repositories, labels, search, and raw API access. Use whenever a task touches " +
-  "GitHub: listing or filing issues, reviewing or merging PRs, checking CI runs, triggering " +
-  "workflows, cutting releases, or querying the GitHub API.";
+  "releases, repositories, labels, Actions secrets and variables, search, and raw API access. " +
+  "Use whenever a task touches GitHub: listing or filing issues, reviewing or merging PRs, " +
+  "checking CI runs, triggering workflows, cutting releases, or managing Actions secrets/variables.";
 
 export const SKILL_AUTHOR = "Kun Chen (kunchenguid)";
 
@@ -63,7 +63,7 @@ gh-axi requires the [\`gh\`](https://cli.github.com/) CLI installed and authenti
 
 ## When to use
 
-Use gh-axi whenever a task touches GitHub: listing, filing, or editing issues; viewing, creating, reviewing, or merging pull requests; inspecting workflow runs and CI failures; triggering, enabling, or disabling workflows; managing releases, repositories, or labels; searching issues, PRs, repos, commits, or code; or calling the GitHub API directly.
+Use gh-axi whenever a task touches GitHub: listing, filing, or editing issues; viewing, creating, reviewing, or merging pull requests; inspecting workflow runs and CI failures; triggering, enabling, or disabling workflows; managing releases, repositories, or labels; managing Actions secrets or variables; searching issues, PRs, repos, commits, or code; or calling the GitHub API directly.
 
 ## Workflow
 
@@ -92,7 +92,11 @@ Run \`npx -y gh-axi --help\` for global flags, or \`npx -y gh-axi <command> --he
 - Output is TOON-encoded and token-efficient; pipe through grep/head only when a list is very long.
 - Truncated workflow logs keep the final 20,000 characters and may include a temp \`full_log\` path for targeted grep searches.
 - Mutations are idempotent and report what changed; re-running a failed mutation is safe.
-- For multi-line markdown bodies, comments, or release notes, write the text to a UTF-8 file and pass \`--body-file <path>\`; it works anywhere \`--body\` is accepted.
+- For multi-line markdown bodies, comments, or release notes, write the text to a UTF-8 file and pass \`--body-file <path>\` or the release \`--notes-file <path>\` alias on commands that support file-backed text.
+- Secret values are stdin-only: \`echo -n "<value>" | npx -y gh-axi secret set <name>\`.
+- Do not pass secrets with \`--body\` or \`-b\`; flags are visible in the \`gh-axi\` process argv.
+- Variable values may use \`--body\`/\`-b\` or stdin because Actions variables are not secret.
+- For multi-line variable values, pipe stdin to \`npx -y gh-axi variable set <name>\`; \`--body\`/\`-b\` is for inline values only.
 - Use \`api\` for anything the dedicated commands do not cover, e.g. \`npx -y gh-axi api repos/{owner}/{repo}/topics\`.
 `;
 }
