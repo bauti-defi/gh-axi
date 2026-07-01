@@ -392,6 +392,90 @@ describe("issueCommand", () => {
       ).rejects.toThrow(AxiError);
       expect(mockedGhExec).not.toHaveBeenCalled();
     });
+
+    it("passes all repeated --label flags to gh issue create (two labels)", async () => {
+      mockedGhExec.mockResolvedValue(
+        "https://github.com/octo/repo/issues/99\n",
+      );
+      mockedGhJson.mockResolvedValue({
+        number: 99,
+        title: "Multi-label issue",
+        state: "OPEN",
+        url: "https://github.com/octo/repo/issues/99",
+      });
+
+      await issueCommand(
+        [
+          "create",
+          "--title",
+          "Multi-label issue",
+          "--label",
+          "enhancement",
+          "--label",
+          "ready-for-agent",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--label")).toHaveLength(2);
+      expect(callArgs).toContain("enhancement");
+      expect(callArgs).toContain("ready-for-agent");
+    });
+
+    it("passes all repeated --label flags to gh issue create (three labels)", async () => {
+      mockedGhExec.mockResolvedValue(
+        "https://github.com/octo/repo/issues/100\n",
+      );
+      mockedGhJson.mockResolvedValue({
+        number: 100,
+        title: "Triple-label issue",
+        state: "OPEN",
+        url: "https://github.com/octo/repo/issues/100",
+      });
+
+      await issueCommand(
+        [
+          "create",
+          "--title",
+          "Triple-label issue",
+          "--label",
+          "bug",
+          "--label",
+          "enhancement",
+          "--label",
+          "good first issue",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--label")).toHaveLength(3);
+      expect(callArgs).toContain("bug");
+      expect(callArgs).toContain("enhancement");
+      expect(callArgs).toContain("good first issue");
+    });
+
+    it("still passes a single --label flag correctly (no regression)", async () => {
+      mockedGhExec.mockResolvedValue(
+        "https://github.com/octo/repo/issues/101\n",
+      );
+      mockedGhJson.mockResolvedValue({
+        number: 101,
+        title: "Single-label issue",
+        state: "OPEN",
+        url: "https://github.com/octo/repo/issues/101",
+      });
+
+      await issueCommand(
+        ["create", "--title", "Single-label issue", "--label", "bug"],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--label")).toHaveLength(1);
+      expect(callArgs).toContain("bug");
+    });
   });
 
   describe("edit with --type", () => {

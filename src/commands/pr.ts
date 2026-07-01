@@ -5,7 +5,7 @@ import { AxiError } from "../errors.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
-import { takeFlag, takeBoolFlag, takeNumber } from "../args.js";
+import { takeFlag, takeBoolFlag, takeNumber, getAllFlags } from "../args.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
 import {
   field,
@@ -227,7 +227,7 @@ flags{list}:
 flags{view}:
   --comments, --reviews (show review submissions and inline review comments), --full (show complete body without truncation)
 flags{create}:
-  --title <text> (required), --body <text> or --body-file <path>, --base, --head, --draft, --assignee, --reviewer, --label, --milestone
+  --title <text> (required), --body <text> or --body-file <path>, --base, --head, --draft, --assignee, --reviewer, --label <name> (repeatable), --milestone
 flags{edit}:
   --title <text>, --body <text> or --body-file <path>, --add-label, --remove-label, --add-assignee, --remove-assignee, --add-reviewer, --remove-reviewer, --milestone
 flags{merge}:
@@ -432,7 +432,7 @@ async function prCreate(args: string[], ctx?: RepoContext): Promise<string> {
   const draft = takeBoolFlag(args, "--draft");
   const assignee = takeFlag(args, "--assignee");
   const reviewer = takeFlag(args, "--reviewer");
-  const label = takeFlag(args, "--label");
+  const labels = getAllFlags(args, "--label");
   const milestone = takeFlag(args, "--milestone");
   const project = takeFlag(args, "--project");
 
@@ -443,7 +443,7 @@ async function prCreate(args: string[], ctx?: RepoContext): Promise<string> {
   if (draft) ghArgs.push("--draft");
   if (assignee) ghArgs.push("--assignee", assignee);
   if (reviewer) ghArgs.push("--reviewer", reviewer);
-  if (label) ghArgs.push("--label", label);
+  for (const l of labels) ghArgs.push("--label", l);
   if (milestone) ghArgs.push("--milestone", milestone);
   if (project) ghArgs.push("--project", project);
 
