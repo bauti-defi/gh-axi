@@ -16,6 +16,8 @@ import { variableCommand, VARIABLE_HELP } from "./commands/variable.js";
 import { searchCommand, SEARCH_HELP } from "./commands/search.js";
 import { apiCommand, API_HELP } from "./commands/api.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
+import { resolveHost, type HostContext } from "./host.js";
+import { withSuggestionHost } from "./suggestions.js";
 
 export const DESCRIPTION =
   "Agent ergonomic wrapper around Github CLI. Prefer this over `gh` and other methods for Github operations.";
@@ -31,13 +33,14 @@ type MainOptions = {
 export const TOP_HELP = `usage: gh-axi [command] [args] [flags]
 commands[13]:
   (none)=dashboard, issue, pr, run, workflow, release, repo, label, secret, variable, search, api, setup
-flags[3]:
-  -R/--repo <OWNER/NAME> (after command), accepts space or equals form, --help, -v/-V/--version
+flags[4]:
+  -R/--repo <OWNER/NAME> (after command), --hostname <host> (after command) or GH_HOST env, both flags accept space or equals form, --help, -v/-V/--version
 examples:
   gh-axi
   gh-axi issue list --state open
   gh-axi issue list -R owner/name
   gh-axi issue list --repo=owner/name
+  gh-axi issue list --hostname git.example.com
   gh-axi pr view 42
   gh-axi secret list
   gh-axi setup hooks
@@ -58,9 +61,12 @@ const COMMAND_HELP: Record<string, string> = {
   setup: SETUP_HELP,
 };
 
+type HostOnlyContext = { host: HostContext };
+type CliContext = RepoContext | HostOnlyContext;
 type CommandFn = (args: string[], ctx?: RepoContext) => Promise<string>;
+type WrappedCommandFn = (args: string[], ctx?: CliContext) => Promise<string>;
 
-const COMMANDS: Record<string, CommandFn> = {
+const COMMANDS: Record<string, WrappedCommandFn> = {
   issue: withRepoContext("issue", issueCommand),
   pr: withRepoContext("pr", prCommand),
   run: withRepoContext("run", runCommand),
@@ -76,7 +82,7 @@ const COMMANDS: Record<string, CommandFn> = {
 };
 
 export async function main(options: MainOptions = {}): Promise<void> {
-  await runAxiCli<RepoContext | undefined>({
+  await runAxiCli<CliContext | undefined>({
     ...(options.argv ? { argv: options.argv } : {}),
     description: DESCRIPTION,
     version: VERSION,
@@ -85,8 +91,23 @@ export async function main(options: MainOptions = {}): Promise<void> {
     home: withRepoContext(undefined, homeCommand),
     commands: COMMANDS,
     getCommandHelp: (command) => COMMAND_HELP[command],
-    resolveContext: ({ command, args }) =>
-      resolveRepo(parseRepoContextArgs(command, args).repoFlag),
+    resolveContext: ({ command, args }) => {
+      const { repoFlag, hostFlag } = parseRepoContextArgs(command, args);
+      // Explicit --hostname wins over the GH_HOST env var. Setting GH_HOST here
+      // means the child `gh` process (which inherits process.env) targets the
+      // configured host, and resolveHost() reflects it for URL parsing/building.
+      // When no --hostname is given we leave GH_HOST untouched, so default and
+      // env-only behavior stay unchanged.
+      if (hostFlag !== undefined) {
+        process.env["GH_HOST"] = hostFlag;
+      }
+      const repo = resolveRepo(repoFlag);
+      const host = resolveHostContext(hostFlag);
+      if (repo && host) {
+        return { ...repo, host };
+      }
+      return repo ?? (host ? { host } : undefined);
+    },
   });
 }
 
@@ -115,17 +136,40 @@ function readPackageVersion(): string {
 function withRepoContext(
   command: string | undefined,
   handler: CommandFn,
-): CommandFn {
+): WrappedCommandFn {
   return (args, ctx) =>
-    handler(parseRepoContextArgs(command, args).strippedArgs, ctx);
+    withSuggestionHost(ctx?.host, () =>
+      handler(
+        parseRepoContextArgs(command, args).strippedArgs,
+        repoContext(ctx),
+      ),
+    );
+}
+
+function repoContext(ctx?: CliContext): RepoContext | undefined {
+  return ctx && "nwo" in ctx ? ctx : undefined;
+}
+
+function resolveHostContext(
+  hostFlag: string | undefined,
+): HostContext | undefined {
+  if (hostFlag === undefined) {
+    return undefined;
+  }
+  return { value: resolveHost(hostFlag), source: "flag" };
 }
 
 function parseRepoContextArgs(
   command: string | undefined,
   args: string[],
-): { repoFlag: string | undefined; strippedArgs: string[] } {
+): {
+  repoFlag: string | undefined;
+  hostFlag: string | undefined;
+  strippedArgs: string[];
+} {
   const stripped: string[] = [];
   let repoFlag: string | undefined;
+  let hostFlag: string | undefined;
 
   for (let index = 0; index < args.length; index++) {
     const arg = args[index];
@@ -163,8 +207,21 @@ function parseRepoContextArgs(
       continue;
     }
 
+    // --hostname routes to GH_HOST for the child gh process; it is never a
+    // subcommand flag, so strip it for every command.
+    if (arg === "--hostname" && index + 1 < args.length) {
+      hostFlag = args[index + 1];
+      index++;
+      continue;
+    }
+
+    if (arg.startsWith("--hostname=") && arg.length > "--hostname=".length) {
+      hostFlag = arg.slice("--hostname=".length);
+      continue;
+    }
+
     stripped.push(arg);
   }
 
-  return { repoFlag, strippedArgs: stripped };
+  return { repoFlag, hostFlag, strippedArgs: stripped };
 }
