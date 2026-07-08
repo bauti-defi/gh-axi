@@ -143,8 +143,11 @@ Repository and host targeting are command-first too:
 - `gh-axi issue list --repo owner/name`
 - `gh-axi issue list --repo=owner/name`
 - `gh-axi run list -R owner/name`
+- `gh-axi repo view --repo owner/name`
 - `gh-axi search issues "login bug" --repo owner/name`
 - `gh-axi issue list --hostname git.example.com`
+
+`repo view` also accepts exactly one positional repository, `gh-axi repo view owner/name`, as a repo-view-specific compatibility exception for `gh repo view [<repository>]`. Do not combine that positional form with `--repo`, and do not pass extra positional arguments. For other commands, use the command-first `--repo owner/name` form.
 
 When a command also needs a destination repository, use a dedicated flag for it:
 
