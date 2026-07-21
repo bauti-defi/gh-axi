@@ -85,7 +85,7 @@ describe("prCommand", () => {
       expect(searchQuery).toContain("repo:octo/repo");
       expect(searchQuery).toContain("is:pr");
       expect(searchQuery).toContain("is:open");
-      expect(searchQuery).toContain('label:"bug"');
+      expect(searchQuery).toContain("label:bug");
       expect(result).toContain("count: 2 of 12 total");
     });
 
@@ -117,10 +117,10 @@ describe("prCommand", () => {
 
       const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
       const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
-      expect(searchQuery).toContain('assignee:"octocat"');
-      expect(searchQuery).toContain('author:"hubot"');
-      expect(searchQuery).toContain('base:"main"');
-      expect(searchQuery).toContain('head:"feature"');
+      expect(searchQuery).toContain("assignee:octocat");
+      expect(searchQuery).toContain("author:hubot");
+      expect(searchQuery).toContain("base:main");
+      expect(searchQuery).toContain("head:feature");
       expect(searchQuery).toContain("draft:true");
     });
 
@@ -138,8 +138,63 @@ describe("prCommand", () => {
 
       const query = (mockedGhRaw.mock.calls[0][0] as string[]).join(" ");
       expect(query).toContain("repository(");
+      expect(query).toContain("pullRequests(states:[OPEN])");
       expect(query).not.toContain("search(");
       expect(result).toContain("count: 2 of 310 total");
+    });
+
+    it("counts merged PRs alongside closed ones in the repository total", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({
+          data: { repository: { pullRequests: { totalCount: 88 } } },
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await prCommand(["list", "--limit", "2", "--state", "closed"], ctx);
+
+      const query = (mockedGhRaw.mock.calls[0][0] as string[]).join(" ");
+      expect(query).toContain("pullRequests(states:[CLOSED,MERGED])");
+    });
+
+    it("omits the states argument for an unfiltered --state all total", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({
+          data: { repository: { pullRequests: { totalCount: 500 } } },
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const result = await prCommand(
+        ["list", "--limit", "2", "--state", "all"],
+        ctx,
+      );
+
+      const query = (mockedGhRaw.mock.calls[0][0] as string[]).join(" ");
+      expect(query).toContain("pullRequests { totalCount }");
+      expect(query).not.toContain("states:");
+      expect(result).toContain("count: 2 of 500 total");
+    });
+
+    it("counts every label of a comma-separated --label list", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 6 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await prCommand(["list", "--limit", "2", "--label", "bug,docs"], ctx);
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain("label:bug");
+      expect(searchQuery).toContain("label:docs");
+      expect(searchQuery).not.toContain("label:bug,docs");
     });
 
     it("omits the total rather than guessing when the count lookup fails", async () => {

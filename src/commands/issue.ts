@@ -17,8 +17,11 @@ import { takeBody, truncateBody } from "../body.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
 import { formatCountLine } from "../format.js";
 import {
+  fetchRepositoryTotal,
   fetchSearchTotal,
+  isSearchableMilestone,
   searchQualifier,
+  searchQualifiers,
   stateQualifiers,
 } from "../totals.js";
 import {
@@ -261,9 +264,12 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
 
   // If we hit the limit, fetch the true totalCount via GraphQL
   let totalCount: number | undefined;
-  if (items.length === limit && ctx) {
+  // A milestone number cannot be expressed as a search qualifier, so no total
+  // can be counted for it — no total beats a wrong one.
+  const countable = !milestone || isSearchableMilestone(milestone);
+  if (items.length === limit && ctx && countable) {
     const filters: string[] = [];
-    if (label) filters.push(searchQualifier("label", label));
+    if (label) filters.push(...searchQualifiers("label", label));
     if (assignee) filters.push(searchQualifier("assignee", assignee));
     if (author) filters.push(searchQualifier("author", author));
     if (milestone) filters.push(searchQualifier("milestone", milestone));
@@ -278,23 +284,7 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
         ...filters,
       ]);
     } else {
-      try {
-        const ghState = (state ?? "open").toUpperCase();
-        const query = `{ repository(owner:"${ctx.owner}", name:"${ctx.name}") { issues(states:[${ghState}]) { totalCount } } }`;
-        const gqlResult = await ghRaw([
-          "api",
-          "graphql",
-          "-f",
-          `query=${query}`,
-        ]);
-        if (gqlResult.exitCode === 0) {
-          const parsed = JSON.parse(gqlResult.stdout);
-          totalCount =
-            parsed?.data?.repository?.issues?.totalCount ?? undefined;
-        }
-      } catch {
-        // fall back to limit-based message
-      }
+      totalCount = await fetchRepositoryTotal(ctx, "issues", state);
     }
   }
   const countLine = formatCountLine({ count: items.length, limit, totalCount });

@@ -29,8 +29,10 @@ export function formatCountLine(opts: CountLineOptions): string {
     return `count: ${count}+ (GitHub search API limit reached)`;
   }
 
-  // Total count known from GraphQL or API
-  if (totalCount !== undefined && totalCount !== null) {
+  // Total count known from GraphQL or API. A total below the number of items
+  // on screen contradicts itself, so it is treated as unknown — the search
+  // index lags behind freshly created issues and can undercount.
+  if (totalCount !== undefined && totalCount !== null && totalCount >= count) {
     return `count: ${count} of ${totalCount} total`;
   }
 
