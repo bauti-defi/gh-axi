@@ -459,6 +459,90 @@ describe("prCommand", () => {
     });
   });
 
+  describe("edit with repeatable flags", () => {
+    it("passes all repeated --add-label flags to gh pr edit", async () => {
+      mockedGhExec.mockResolvedValue("");
+
+      await prCommand(
+        ["edit", "42", "--add-label", "bug", "--add-label", "ready-for-agent"],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(2);
+      expect(callArgs).toContain("bug");
+      expect(callArgs).toContain("ready-for-agent");
+    });
+
+    it("passes all repeated --remove-label flags to gh pr edit", async () => {
+      mockedGhExec.mockResolvedValue("");
+
+      await prCommand(
+        [
+          "edit",
+          "42",
+          "--remove-label",
+          "needs-triage",
+          "--remove-label",
+          "needs-info",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--remove-label")).toHaveLength(2);
+      expect(callArgs).toContain("needs-triage");
+      expect(callArgs).toContain("needs-info");
+    });
+
+    it("passes all repeated assignee and reviewer flags to gh pr edit", async () => {
+      mockedGhExec.mockResolvedValue("");
+
+      await prCommand(
+        [
+          "edit",
+          "42",
+          "--add-assignee",
+          "octocat",
+          "--add-assignee",
+          "hubot",
+          "--remove-assignee",
+          "monalisa",
+          "--remove-assignee",
+          "ghost",
+          "--add-reviewer",
+          "alice",
+          "--add-reviewer",
+          "bob",
+          "--remove-reviewer",
+          "carol",
+          "--remove-reviewer",
+          "dave",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-assignee")).toHaveLength(2);
+      expect(callArgs.filter((a) => a === "--remove-assignee")).toHaveLength(2);
+      expect(callArgs.filter((a) => a === "--add-reviewer")).toHaveLength(2);
+      expect(callArgs.filter((a) => a === "--remove-reviewer")).toHaveLength(2);
+      expect(callArgs).toContain("hubot");
+      expect(callArgs).toContain("bob");
+      expect(callArgs).toContain("dave");
+    });
+
+    it("still passes a single --add-label correctly (no regression)", async () => {
+      mockedGhExec.mockResolvedValue("");
+
+      await prCommand(["edit", "42", "--add-label", "bug"], ctx);
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(1);
+      expect(callArgs).toContain("bug");
+    });
+  });
+
   describe("close", () => {
     it("returns already closed when PR is already closed (idempotent)", async () => {
       mockedGhJson.mockResolvedValue({ state: "CLOSED" });

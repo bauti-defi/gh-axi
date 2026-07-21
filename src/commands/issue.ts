@@ -66,7 +66,7 @@ flags{view}:
 flags{create}:
   --title <text> (required), --body <text> or --body-file <path>, --assignee <login>, --label <name> (repeatable), --milestone <name>, --type <name>
 flags{edit}:
-  --title, --body <text> or --body-file <path>, --add-label, --remove-label, --add-assignee, --remove-assignee, --milestone, --type <name>, --no-type
+  --title, --body <text> or --body-file <path>, --add-label <name> (repeatable), --remove-label <name> (repeatable), --add-assignee <login> (repeatable), --remove-assignee <login> (repeatable), --milestone, --type <name>, --no-type
 flags{close}:
   --reason <completed|not_planned>, --comment <text>
 flags{comment}:
@@ -535,10 +535,10 @@ async function editIssue(args: string[], ctx?: RepoContext): Promise<string> {
 
   const title = getFlag(args, "--title");
   const body = takeBody(args);
-  const addLabel = getFlag(args, "--add-label");
-  const removeLabel = getFlag(args, "--remove-label");
-  const addAssignee = getFlag(args, "--add-assignee");
-  const removeAssignee = getFlag(args, "--remove-assignee");
+  const addLabels = getAllFlags(args, "--add-label");
+  const removeLabels = getAllFlags(args, "--remove-label");
+  const addAssignees = getAllFlags(args, "--add-assignee");
+  const removeAssignees = getAllFlags(args, "--remove-assignee");
   const milestone = getFlag(args, "--milestone");
   const clearType = takeBoolFlag(args, "--no-type");
   const typeName = getOptionalRequiredFlag(args, "--type");
@@ -553,10 +553,11 @@ async function editIssue(args: string[], ctx?: RepoContext): Promise<string> {
   const ghArgs = ["issue", "edit", String(num)];
   if (title) ghArgs.push("--title", title);
   if (body !== undefined) ghArgs.push("--body", body);
-  if (addLabel) ghArgs.push("--add-label", addLabel);
-  if (removeLabel) ghArgs.push("--remove-label", removeLabel);
-  if (addAssignee) ghArgs.push("--add-assignee", addAssignee);
-  if (removeAssignee) ghArgs.push("--remove-assignee", removeAssignee);
+  for (const label of addLabels) ghArgs.push("--add-label", label);
+  for (const label of removeLabels) ghArgs.push("--remove-label", label);
+  for (const assignee of addAssignees) ghArgs.push("--add-assignee", assignee);
+  for (const assignee of removeAssignees)
+    ghArgs.push("--remove-assignee", assignee);
   if (milestone) ghArgs.push("--milestone", milestone);
 
   // Only call `gh issue edit` if there is a non-type field to update; otherwise

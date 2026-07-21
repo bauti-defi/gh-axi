@@ -478,6 +478,114 @@ describe("issueCommand", () => {
     });
   });
 
+  describe("edit with repeatable flags", () => {
+    function mockEditedIssue(): void {
+      mockedGhExec.mockResolvedValue("");
+      mockedGhJson.mockResolvedValue({
+        number: 276,
+        title: "X",
+        state: "OPEN",
+        labels: [],
+        assignees: [],
+        id: "I_node276",
+      });
+    }
+
+    it("passes all repeated --add-label flags to gh issue edit", async () => {
+      mockEditedIssue();
+
+      await issueCommand(
+        ["edit", "276", "--add-label", "bug", "--add-label", "ready-for-agent"],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(2);
+      expect(callArgs).toContain("bug");
+      expect(callArgs).toContain("ready-for-agent");
+    });
+
+    it("passes all repeated --remove-label flags to gh issue edit", async () => {
+      mockEditedIssue();
+
+      await issueCommand(
+        [
+          "edit",
+          "276",
+          "--remove-label",
+          "needs-triage",
+          "--remove-label",
+          "needs-info",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--remove-label")).toHaveLength(2);
+      expect(callArgs).toContain("needs-triage");
+      expect(callArgs).toContain("needs-info");
+    });
+
+    it("applies adds and removes together without dropping any", async () => {
+      mockEditedIssue();
+
+      await issueCommand(
+        [
+          "edit",
+          "276",
+          "--add-label",
+          "bug",
+          "--add-label",
+          "ready-for-agent",
+          "--remove-label",
+          "needs-triage",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(2);
+      expect(callArgs.filter((a) => a === "--remove-label")).toHaveLength(1);
+      expect(callArgs).toContain("ready-for-agent");
+    });
+
+    it("passes all repeated assignee flags to gh issue edit", async () => {
+      mockEditedIssue();
+
+      await issueCommand(
+        [
+          "edit",
+          "276",
+          "--add-assignee",
+          "octocat",
+          "--add-assignee",
+          "hubot",
+          "--remove-assignee",
+          "monalisa",
+          "--remove-assignee",
+          "ghost",
+        ],
+        ctx,
+      );
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-assignee")).toHaveLength(2);
+      expect(callArgs.filter((a) => a === "--remove-assignee")).toHaveLength(2);
+      expect(callArgs).toContain("hubot");
+      expect(callArgs).toContain("ghost");
+    });
+
+    it("still passes a single --add-label correctly (no regression)", async () => {
+      mockEditedIssue();
+
+      await issueCommand(["edit", "276", "--add-label", "bug"], ctx);
+
+      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
+      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(1);
+      expect(callArgs).toContain("bug");
+    });
+  });
+
   describe("edit with --type", () => {
     it("applies --type via graphql mutation", async () => {
       // 1) resolve type

@@ -249,7 +249,7 @@ flags{view}:
 flags{create}:
   --title <text> (required), --body <text> or --body-file <path>, --base, --head, --draft, --assignee, --reviewer, --label <name> (repeatable), --milestone
 flags{edit}:
-  --title <text>, --body <text> or --body-file <path>, --add-label, --remove-label, --add-assignee, --remove-assignee, --add-reviewer, --remove-reviewer, --milestone
+  --title <text>, --body <text> or --body-file <path>, --add-label <name> (repeatable), --remove-label <name> (repeatable), --add-assignee <login> (repeatable), --remove-assignee <login> (repeatable), --add-reviewer <login> (repeatable), --remove-reviewer <login> (repeatable), --milestone
 flags{merge}:
   --method <merge|squash|rebase>, --merge, --squash, --rebase, --auto, --delete-branch, --body <text> or --body-file <path>, --subject
 flags{review}:
@@ -488,24 +488,26 @@ async function prEdit(args: string[], ctx?: RepoContext): Promise<string> {
   const num = takeNumber(args, "PR");
   const title = takeFlag(args, "--title");
   const body = takeBody(args);
-  const addLabel = takeFlag(args, "--add-label");
-  const removeLabel = takeFlag(args, "--remove-label");
-  const addAssignee = takeFlag(args, "--add-assignee");
-  const removeAssignee = takeFlag(args, "--remove-assignee");
-  const addReviewer = takeFlag(args, "--add-reviewer");
-  const removeReviewer = takeFlag(args, "--remove-reviewer");
+  const addLabels = getAllFlags(args, "--add-label");
+  const removeLabels = getAllFlags(args, "--remove-label");
+  const addAssignees = getAllFlags(args, "--add-assignee");
+  const removeAssignees = getAllFlags(args, "--remove-assignee");
+  const addReviewers = getAllFlags(args, "--add-reviewer");
+  const removeReviewers = getAllFlags(args, "--remove-reviewer");
   const milestone = takeFlag(args, "--milestone");
   const base = takeFlag(args, "--base");
 
   const ghArgs = ["pr", "edit", String(num)];
   if (title) ghArgs.push("--title", title);
   if (body !== undefined) ghArgs.push("--body", body);
-  if (addLabel) ghArgs.push("--add-label", addLabel);
-  if (removeLabel) ghArgs.push("--remove-label", removeLabel);
-  if (addAssignee) ghArgs.push("--add-assignee", addAssignee);
-  if (removeAssignee) ghArgs.push("--remove-assignee", removeAssignee);
-  if (addReviewer) ghArgs.push("--add-reviewer", addReviewer);
-  if (removeReviewer) ghArgs.push("--remove-reviewer", removeReviewer);
+  for (const label of addLabels) ghArgs.push("--add-label", label);
+  for (const label of removeLabels) ghArgs.push("--remove-label", label);
+  for (const assignee of addAssignees) ghArgs.push("--add-assignee", assignee);
+  for (const assignee of removeAssignees)
+    ghArgs.push("--remove-assignee", assignee);
+  for (const reviewer of addReviewers) ghArgs.push("--add-reviewer", reviewer);
+  for (const reviewer of removeReviewers)
+    ghArgs.push("--remove-reviewer", reviewer);
   if (milestone) ghArgs.push("--milestone", milestone);
   if (base) ghArgs.push("--base", base);
 
