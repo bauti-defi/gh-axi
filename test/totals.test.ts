@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isSearchableMilestone,
+  isSearchableValue,
   searchQualifier,
   searchQualifiers,
   stateQualifiers,
@@ -69,5 +70,19 @@ describe("isSearchableMilestone", () => {
   it("rejects a milestone number, which search matches by title only", () => {
     expect(isSearchableMilestone("1")).toBe(false);
     expect(isSearchableMilestone("42")).toBe(false);
+  });
+});
+
+describe("isSearchableValue", () => {
+  it("accepts values search can express", () => {
+    expect(isSearchableValue("bug")).toBe(true);
+    expect(isSearchableValue("help wanted")).toBe(true);
+    expect(isSearchableValue("@me")).toBe(true);
+    expect(isSearchableValue("bug,gh-licenses")).toBe(true);
+  });
+
+  it("rejects a value containing a double quote search cannot escape", () => {
+    expect(isSearchableValue('needs "design" input')).toBe(false);
+    expect(isSearchableValue('"needs,triage"')).toBe(false);
   });
 });

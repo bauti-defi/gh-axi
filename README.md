@@ -109,7 +109,7 @@ The label, assignee, reviewer, and project flags of `issue create`/`edit` and `p
 A repeated flag with a missing or empty value (`--add-label` with nothing after it, or `--add-label=`) fails with a validation error instead of being silently dropped.
 
 In `gh-axi issue list` and `gh-axi pr list`, the `count: N of M total` line counts only what the filters you passed (`--label`, `--assignee`, `--author`, and the other list filters) match, not every issue or PR in the repository.
-When a total cannot be expressed faithfully — notably a numeric `--milestone`, since search matches milestone titles only — gh-axi omits it and falls back to `showing first N` rather than printing a number that does not match the query.
+When a total cannot be expressed faithfully — a numeric `--milestone`, since search matches milestone titles only, or a filter value containing a double quote, which search has no way to escape — gh-axi omits it and falls back to `showing first N` rather than printing a number that does not match the query.
 
 Long `run view --log` and `run view --log-failed` output shows the last 20,000 characters so CI failures stay visible.
 When truncation happens, gh-axi best-effort saves the complete log to a temp file, includes it as `full_log`, and prints a `help:` hint telling agents to grep that file for earlier context.

@@ -65,6 +65,20 @@ export function isSearchableMilestone(value: string): boolean {
 }
 
 /**
+ * Whether a gh flag value can be translated into a search qualifier at all.
+ *
+ * {@link searchQualifier} either wraps a value in double quotes or emits it
+ * verbatim, and search has no escape sequence for a double quote inside a
+ * quoted term, so an embedded `"` ends the term early and the rest of the value
+ * is reinterpreted as unrelated query text. The resulting count answers a
+ * different question than the listing did, so callers skip the total entirely,
+ * same as they do for a numeric milestone.
+ */
+export function isSearchableValue(value: string): boolean {
+  return !value.includes('"');
+}
+
+/**
  * Total number of issues or pull requests matching every active filter.
  *
  * Returns undefined when the count cannot be determined, so callers fall back
@@ -133,4 +147,51 @@ function statesArgument(
       ? "CLOSED,MERGED"
       : normalized;
   return `(states:[${states}])`;
+}
+
+/** One active gh list flag, before translation into a search qualifier. */
+export interface ListFilter {
+  key: string;
+  value: string;
+  /** Set for Cobra stringSlice flags such as `--label`, which gh reads as a list. */
+  list?: boolean;
+}
+
+const TYPE_QUALIFIER: Record<RepositoryEntity, string> = {
+  issues: "is:issue",
+  pullRequests: "is:pr",
+};
+
+/**
+ * Total for one `issue list`/`pr list` page, counted through whichever source
+ * can express the active filters.
+ *
+ * An unfiltered listing is counted through the `repository` connection, which
+ * is exact where search is eventually consistent. Any filter forces the count
+ * through search instead, because `repository.issues`/`repository.pullRequests`
+ * totalCount ignores the filters and would report the repository-wide total.
+ * Returns undefined when no source can answer the query.
+ */
+export async function fetchListTotal(
+  ctx: RepoContext,
+  entity: RepositoryEntity,
+  state: string | undefined,
+  filters: ListFilter[],
+): Promise<number | undefined> {
+  if (!filters.every((filter) => isSearchableValue(filter.value))) {
+    return undefined;
+  }
+  if (filters.length === 0) return fetchRepositoryTotal(ctx, entity, state);
+
+  const qualifiers = filters.flatMap((filter) =>
+    filter.list
+      ? searchQualifiers(filter.key, filter.value)
+      : [searchQualifier(filter.key, filter.value)],
+  );
+  return fetchSearchTotal([
+    `repo:${ctx.nwo}`,
+    TYPE_QUALIFIER[entity],
+    ...stateQualifiers(state),
+    ...qualifiers,
+  ]);
 }

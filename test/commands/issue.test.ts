@@ -265,6 +265,22 @@ describe("issueCommand", () => {
       expect(result).not.toContain("total");
     });
 
+    it("skips the total for a filter value containing a double quote", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+
+      const result = await issueCommand(
+        ["list", "--limit", "2", "--label", 'needs "design" input'],
+        ctx,
+      );
+
+      expect(mockedGhRaw).not.toHaveBeenCalled();
+      expect(result).toContain("count: 2 (showing first 2)");
+      expect(result).not.toContain("total");
+    });
+
     it("carries assignee, author and milestone into the filtered total", async () => {
       mockedGhJson.mockResolvedValue([
         { number: 1, title: "A", state: "OPEN" },

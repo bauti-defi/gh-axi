@@ -4,13 +4,7 @@ import { ghJson, ghExec, ghRaw } from "../gh.js";
 import { AxiError } from "../errors.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
-import {
-  fetchRepositoryTotal,
-  fetchSearchTotal,
-  searchQualifier,
-  searchQualifiers,
-  stateQualifiers,
-} from "../totals.js";
+import { fetchListTotal, type ListFilter } from "../totals.js";
 import { getSuggestions } from "../suggestions.js";
 import {
   takeFlag,
@@ -333,26 +327,15 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
   // If we hit the limit, fetch the true totalCount via GraphQL
   let totalCount: number | undefined;
   if (items.length === limitNum && ctx) {
-    const filters: string[] = [];
-    if (label) filters.push(...searchQualifiers("label", label));
-    if (assignee) filters.push(searchQualifier("assignee", assignee));
-    if (author) filters.push(searchQualifier("author", author));
-    if (base) filters.push(searchQualifier("base", base));
-    if (head) filters.push(searchQualifier("head", head));
-    if (draft) filters.push("draft:true");
+    const filters: ListFilter[] = [];
+    if (label) filters.push({ key: "label", value: label, list: true });
+    if (assignee) filters.push({ key: "assignee", value: assignee });
+    if (author) filters.push({ key: "author", value: author });
+    if (base) filters.push({ key: "base", value: base });
+    if (head) filters.push({ key: "head", value: head });
+    if (draft) filters.push({ key: "draft", value: "true" });
 
-    if (filters.length > 0) {
-      // Filtered listings must be counted through search; pullRequests
-      // totalCount cannot express assignee, author or draft at all.
-      totalCount = await fetchSearchTotal([
-        `repo:${ctx.nwo}`,
-        "is:pr",
-        ...stateQualifiers(state),
-        ...filters,
-      ]);
-    } else {
-      totalCount = await fetchRepositoryTotal(ctx, "pullRequests", state);
-    }
+    totalCount = await fetchListTotal(ctx, "pullRequests", state, filters);
   }
   const countLine = formatCountLine({
     count: items.length,

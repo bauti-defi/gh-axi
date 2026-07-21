@@ -17,12 +17,9 @@ import { takeBody, truncateBody } from "../body.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
 import { formatCountLine } from "../format.js";
 import {
-  fetchRepositoryTotal,
-  fetchSearchTotal,
+  fetchListTotal,
   isSearchableMilestone,
-  searchQualifier,
-  searchQualifiers,
-  stateQualifiers,
+  type ListFilter,
 } from "../totals.js";
 import {
   field,
@@ -268,24 +265,13 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
   // can be counted for it — no total beats a wrong one.
   const countable = !milestone || isSearchableMilestone(milestone);
   if (items.length === limit && ctx && countable) {
-    const filters: string[] = [];
-    if (label) filters.push(...searchQualifiers("label", label));
-    if (assignee) filters.push(searchQualifier("assignee", assignee));
-    if (author) filters.push(searchQualifier("author", author));
-    if (milestone) filters.push(searchQualifier("milestone", milestone));
+    const filters: ListFilter[] = [];
+    if (label) filters.push({ key: "label", value: label, list: true });
+    if (assignee) filters.push({ key: "assignee", value: assignee });
+    if (author) filters.push({ key: "author", value: author });
+    if (milestone) filters.push({ key: "milestone", value: milestone });
 
-    if (filters.length > 0) {
-      // Filtered listings must be counted through search; repository.issues
-      // totalCount ignores these filters and would report the repo-wide total.
-      totalCount = await fetchSearchTotal([
-        `repo:${ctx.nwo}`,
-        "is:issue",
-        ...stateQualifiers(state),
-        ...filters,
-      ]);
-    } else {
-      totalCount = await fetchRepositoryTotal(ctx, "issues", state);
-    }
+    totalCount = await fetchListTotal(ctx, "issues", state, filters);
   }
   const countLine = formatCountLine({ count: items.length, limit, totalCount });
 
