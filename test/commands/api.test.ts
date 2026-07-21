@@ -100,6 +100,71 @@ describe('apiCommand', () => {
     expect(result).toContain('truncated: false');
   });
 
+  it('forwards --jq to gh api', async () => {
+    mockedGhExec.mockResolvedValue('[]');
+
+    await apiCommand(['/repos/octo/repo/issues/1', '--jq', '[.labels[].name]']);
+
+    expect(mockedGhExec).toHaveBeenCalledWith(
+      expect.arrayContaining(['--jq', '[.labels[].name]']),
+      undefined,
+    );
+  });
+
+  it('forwards --template to gh api', async () => {
+    mockedGhExec.mockResolvedValue('out');
+
+    await apiCommand(['/repos/octo/repo', '--template', '{{.name}}']);
+
+    expect(mockedGhExec).toHaveBeenCalledWith(
+      expect.arrayContaining(['--template', '{{.name}}']),
+      undefined,
+    );
+  });
+
+  it('does not strip fields the caller explicitly selected with --jq', async () => {
+    // `url` is a noisy key by default, but selecting it by hand is deliberate.
+    mockedGhExec.mockResolvedValue(JSON.stringify({ url: 'https://api.github.com/x' }));
+
+    const result = await apiCommand(['/repos/octo/repo', '--jq', '{url: .url}']);
+
+    expect(result).toContain('https://api.github.com/x');
+  });
+
+  it('rejects an unknown flag instead of silently ignoring it', async () => {
+    await expect(apiCommand(['/repos/octo/repo', '--bogus', 'x'])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(mockedGhExec).not.toHaveBeenCalled();
+  });
+
+  it('names the offending flag without echoing its value', async () => {
+    await expect(apiCommand(['/repos/octo/repo', '--token=hunter2'])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('--token'),
+    });
+    await expect(apiCommand(['/repos/octo/repo', '--token=hunter2'])).rejects.not.toMatchObject({
+      message: expect.stringContaining('hunter2'),
+    });
+  });
+
+  it('does not consume the path when --paginate precedes it', async () => {
+    mockedGhExec.mockResolvedValue('{}');
+
+    await apiCommand(['--paginate', '/repos/octo/repo/pulls']);
+
+    expect(mockedGhExec).toHaveBeenCalledWith(
+      expect.arrayContaining(['api', '/repos/octo/repo/pulls', '--paginate']),
+      undefined,
+    );
+  });
+
+  it('rejects a value flag with no value', async () => {
+    await expect(apiCommand(['/repos/octo/repo', '--jq'])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+  });
+
   it('wraps truncated non-JSON output in TOON envelope with truncation metadata', async () => {
     const longText = 'x'.repeat(5000);
     mockedGhExec.mockResolvedValue(longText);
