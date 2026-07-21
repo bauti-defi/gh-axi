@@ -219,6 +219,63 @@ describe('apiCommand', () => {
     );
   });
 
+  it('rejects an empty --jq value instead of silently disabling field stripping', async () => {
+    await expect(apiCommand(['/repos/octo/repo', '--jq='])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('--jq'),
+    });
+    await expect(apiCommand(['/repos/octo/repo', '--jq', '   '])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(mockedGhExec).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty --template value', async () => {
+    await expect(apiCommand(['/repos/octo/repo', '--template='])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('--template'),
+    });
+    expect(mockedGhExec).not.toHaveBeenCalled();
+  });
+
+  it('does not rewrite content of a long string on the --jq path', async () => {
+    const body = 'see https://github.com/octo/repo/pull/5 '.repeat(10);
+    mockedGhExec.mockResolvedValue(JSON.stringify({ body }));
+
+    const result = await apiCommand(['/repos/octo/repo/issues/1', '--jq', '{body: .body}']);
+
+    expect(body.length).toBeGreaterThan(200);
+    expect(result).toContain('https://github.com/octo/repo/pull/5');
+    expect(result).not.toContain('PR#5');
+  });
+
+  it('still cleans long strings on the default path', async () => {
+    const body = 'see https://github.com/octo/repo/pull/5 '.repeat(10);
+    mockedGhExec.mockResolvedValue(JSON.stringify({ body }));
+
+    const result = await apiCommand(['/repos/octo/repo/issues/1']);
+
+    expect(result).toContain('PR#5');
+  });
+
+  it('rejects an extra positional instead of silently ignoring it', async () => {
+    await expect(apiCommand(['/repos/octo/repo', '/extra'])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    await expect(apiCommand(['POST', '/repos/octo/repo', '/extra'])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+    });
+    expect(mockedGhExec).not.toHaveBeenCalled();
+  });
+
+  it('rejects a lone HTTP method with no path', async () => {
+    await expect(apiCommand(['POST'])).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('path is required'),
+    });
+    expect(mockedGhExec).not.toHaveBeenCalled();
+  });
+
   it('rejects a value flag with no value', async () => {
     await expect(apiCommand(['/repos/octo/repo', '--jq'])).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',

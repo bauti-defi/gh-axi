@@ -104,6 +104,10 @@ function parseArgs(args: string[]): ParsedApiArgs {
       const key = name === '--jq' ? 'jq' : 'template';
       if (parsed[key] !== undefined)
         throw new AxiError(`${name} may only be given once`, 'VALIDATION_ERROR');
+      // An empty value (an unset shell variable) is a no-op filter for gh that
+      // would still suppress the default field stripping here.
+      if (value.trim() === '')
+        throw new AxiError(`${name} requires a value`, 'VALIDATION_ERROR');
       parsed[key] = value;
     }
   }
@@ -125,18 +129,25 @@ export async function apiCommand(args: string[], ctx?: RepoContext): Promise<str
 
   const { positionals, fields, headers, jq, template, paginate } = parseArgs(args);
 
-  let method: string;
-  let path: string;
+  const pathRequired = new AxiError(
+    'API path is required: gh-axi api [<method>] <path>',
+    'VALIDATION_ERROR',
+  );
+  if (positionals.length === 0) throw pathRequired;
 
-  if (positionals.length >= 2 && HTTP_METHODS.has(positionals[0].toUpperCase())) {
-    method = positionals[0].toUpperCase();
-    path = positionals[1];
-  } else if (positionals.length >= 1) {
-    method = 'GET';
-    path = positionals[0];
-  } else {
-    throw new AxiError('API path is required: gh-axi api [<method>] <path>', 'VALIDATION_ERROR');
+  // A positional the command cannot place is a caller typo, and dropping it
+  // silently requests a different endpoint than the one that was asked for.
+  const methodGiven = HTTP_METHODS.has(positionals[0].toUpperCase());
+  if (positionals.length > (methodGiven ? 2 : 1)) {
+    throw new AxiError(
+      'too many arguments for gh-axi api: expected [<method>] <path>',
+      'VALIDATION_ERROR',
+    );
   }
+  if (methodGiven && positionals.length < 2) throw pathRequired;
+
+  const method = methodGiven ? positionals[0].toUpperCase() : 'GET';
+  const path = methodGiven ? positionals[1] : positionals[0];
 
   const ghArgs = ['api', path, '--method', method];
 
@@ -164,8 +175,7 @@ export async function apiCommand(args: string[], ctx?: RepoContext): Promise<str
   const raw = await ghExec(ghArgs, ctx);
   try {
     const data = JSON.parse(raw);
-    const cleaned = callerShapedOutput ? clampStrings(data) : stripNoisyFields(data);
-    return encode(cleaned);
+    return encode(shapeOutput(data, !callerShapedOutput));
   } catch {
     // Not JSON — wrap in TOON envelope with truncation metadata
     const trimmed = raw.trim();
@@ -217,43 +227,39 @@ function collapseRepo(obj: Record<string, unknown>): Record<string, unknown> {
   return obj;
 }
 
+/** Bound a string value's length, leaving its content untouched. */
+function truncateString(value: string): string {
+  if (value.length <= STRING_VALUE_TRUNCATION_LIMIT) return value;
+  return value.slice(0, STRING_VALUE_TRUNCATION_LIMIT) + '... (truncated)';
+}
+
 /** Clean and truncate a long string value (e.g. bodies, comments, blobs). */
 function clampString(value: string): string {
   if (value.length <= LONG_STRING_CLEANUP_THRESHOLD) return value;
-  const cleaned = cleanBody(value);
-  if (cleaned.length > STRING_VALUE_TRUNCATION_LIMIT) {
-    return cleaned.slice(0, STRING_VALUE_TRUNCATION_LIMIT) + '... (truncated)';
-  }
-  return cleaned;
+  return truncateString(cleanBody(value));
 }
 
 /**
- * Bound string values without touching keys, for output the caller shaped with
- * --jq/--template.
+ * Walk a decoded API response, bounding every string value.
+ *
+ * With `stripNoisyKeys` the noisy keys are dropped and long strings are cleaned
+ * as well. Output the caller shaped with --jq/--template keeps both its keys and
+ * its content verbatim and is only length-bounded, since rewriting a field they
+ * selected by name is the same silent mutation as deleting it.
  */
-function clampStrings(obj: unknown, depth = 0): unknown {
-  if (depth > 8) return obj;
-  if (Array.isArray(obj)) return obj.map((item) => clampStrings(item, depth + 1));
-  if (obj !== null && typeof obj === 'object') {
-    const result: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
-      result[key] = clampStrings(value, depth + 1);
-    }
-    return result;
-  }
-  if (typeof obj === 'string') return clampString(obj);
-  return obj;
-}
-
-function stripNoisyFields(obj: unknown, depth = 0): unknown {
+function shapeOutput(obj: unknown, stripNoisyKeys: boolean, depth = 0): unknown {
   if (depth > 8) return obj;
   if (Array.isArray(obj)) {
-    return obj.map((item) => stripNoisyFields(item, depth + 1));
+    return obj.map((item) => shapeOutput(item, stripNoisyKeys, depth + 1));
   }
   if (obj !== null && typeof obj === 'object') {
     const record = obj as Record<string, unknown>;
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(record)) {
+      if (!stripNoisyKeys) {
+        result[key] = shapeOutput(value, stripNoisyKeys, depth + 1);
+        continue;
+      }
       if (NOISY_KEYS.has(key)) continue;
       if (isTemplateUrlKey(key)) continue;
       // Strip nested user objects down to just login
@@ -266,10 +272,10 @@ function stripNoisyFields(obj: unknown, depth = 0): unknown {
         result[key] = collapseRepo(value as Record<string, unknown>);
         continue;
       }
-      result[key] = stripNoisyFields(value, depth + 1);
+      result[key] = shapeOutput(value, stripNoisyKeys, depth + 1);
     }
     return result;
   }
-  if (typeof obj === 'string') return clampString(obj);
+  if (typeof obj === 'string') return stripNoisyKeys ? clampString(obj) : truncateString(obj);
   return obj;
 }
