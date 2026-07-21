@@ -3,7 +3,7 @@
  *
  * Standard phrases:
  *   count: N                                — simple count
- *   count: N of T total                     — when total is known
+ *   count: N of T total                     — when a total of at least N is known
  *   count: N (showing first N)              — when truncated by limit
  *   count: N+ (GitHub search API limit reached) — search API limit
  */
