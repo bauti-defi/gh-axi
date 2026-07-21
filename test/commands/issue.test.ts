@@ -161,6 +161,149 @@ describe("issueCommand", () => {
       expect(result).toContain("bug");
     });
 
+    it("counts only filtered issues when --label is applied", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 42 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const result = await issueCommand(
+        ["list", "--limit", "2", "--label", "ready-for-agent"],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain("repo:octo/repo");
+      expect(searchQuery).toContain("is:issue");
+      expect(searchQuery).toContain("is:open");
+      expect(searchQuery).toContain('label:"ready-for-agent"');
+      expect(result).toContain("count: 2 of 42 total");
+    });
+
+    it("quotes filter values containing spaces", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 7 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await issueCommand(
+        ["list", "--limit", "2", "--label", "help wanted"],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain('label:"help wanted"');
+    });
+
+    it("carries assignee, author and milestone into the filtered total", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 3 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await issueCommand(
+        [
+          "list",
+          "--limit",
+          "2",
+          "--assignee",
+          "octocat",
+          "--author",
+          "hubot",
+          "--milestone",
+          "v1.0",
+        ],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain('assignee:"octocat"');
+      expect(searchQuery).toContain('author:"hubot"');
+      expect(searchQuery).toContain('milestone:"v1.0"');
+    });
+
+    it("uses the exact repository total when no filter is applied", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({
+          data: { repository: { issues: { totalCount: 978 } } },
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const result = await issueCommand(["list", "--limit", "2"], ctx);
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const query = gqlArgs.join(" ");
+      expect(query).toContain("repository(");
+      expect(query).not.toContain("search(");
+      expect(result).toContain("count: 2 of 978 total");
+    });
+
+    it("omits the total rather than guessing when the count lookup fails", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: "",
+        stderr: "boom",
+        exitCode: 1,
+      });
+
+      const result = await issueCommand(
+        ["list", "--limit", "2", "--label", "bug"],
+        ctx,
+      );
+
+      expect(result).toContain("count: 2 (showing first 2)");
+      expect(result).not.toContain("total");
+    });
+
+    it("drops the state qualifier when --state all is requested", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "CLOSED" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 9 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await issueCommand(
+        ["list", "--limit", "2", "--state", "all", "--label", "bug"],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).not.toContain("is:open");
+      expect(searchQuery).not.toContain("is:closed");
+    });
+
     it("throws VALIDATION_ERROR for unknown --fields", async () => {
       await expect(
         issueCommand(["list", "--fields", "nonexistent"], ctx),

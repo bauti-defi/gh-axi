@@ -9,13 +9,14 @@ vi.mock("../../src/gh.js", () => ({
   ghRaw: vi.fn(),
 }));
 
-import { ghJson, ghExec } from "../../src/gh.js";
+import { ghJson, ghExec, ghRaw } from "../../src/gh.js";
 import { prCommand, PR_HELP } from "../../src/commands/pr.js";
 import { AxiError } from "../../src/errors.js";
 import type { RepoContext } from "../../src/context.js";
 
 const mockedGhJson = vi.mocked(ghJson);
 const mockedGhExec = vi.mocked(ghExec);
+const mockedGhRaw = vi.mocked(ghRaw);
 
 const ctx: RepoContext = {
   owner: "octo",
@@ -57,6 +58,105 @@ describe("prCommand", () => {
     it("returns error for unknown subcommand", async () => {
       const result = await prCommand(["unknown"]);
       expect(result).toContain("Unknown pr subcommand: unknown");
+    });
+  });
+
+  describe("list filtered totals", () => {
+    const twoPrs = [
+      { number: 1, title: "A", state: "OPEN", isDraft: false },
+      { number: 2, title: "B", state: "OPEN", isDraft: true },
+    ];
+
+    it("counts only filtered PRs when --label is applied", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 12 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const result = await prCommand(
+        ["list", "--limit", "2", "--label", "bug"],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain("repo:octo/repo");
+      expect(searchQuery).toContain("is:pr");
+      expect(searchQuery).toContain("is:open");
+      expect(searchQuery).toContain('label:"bug"');
+      expect(result).toContain("count: 2 of 12 total");
+    });
+
+    it("carries assignee, author, base, head and draft into the total", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 4 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await prCommand(
+        [
+          "list",
+          "--limit",
+          "2",
+          "--assignee",
+          "octocat",
+          "--author",
+          "hubot",
+          "--base",
+          "main",
+          "--head",
+          "feature",
+          "--draft",
+        ],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain('assignee:"octocat"');
+      expect(searchQuery).toContain('author:"hubot"');
+      expect(searchQuery).toContain('base:"main"');
+      expect(searchQuery).toContain('head:"feature"');
+      expect(searchQuery).toContain("draft:true");
+    });
+
+    it("uses the exact repository total when no filter is applied", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({
+          data: { repository: { pullRequests: { totalCount: 310 } } },
+        }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      const result = await prCommand(["list", "--limit", "2"], ctx);
+
+      const query = (mockedGhRaw.mock.calls[0][0] as string[]).join(" ");
+      expect(query).toContain("repository(");
+      expect(query).not.toContain("search(");
+      expect(result).toContain("count: 2 of 310 total");
+    });
+
+    it("omits the total rather than guessing when the count lookup fails", async () => {
+      mockedGhJson.mockResolvedValue(twoPrs);
+      mockedGhRaw.mockResolvedValue({
+        stdout: "",
+        stderr: "boom",
+        exitCode: 1,
+      });
+
+      const result = await prCommand(
+        ["list", "--limit", "2", "--label", "bug"],
+        ctx,
+      );
+
+      expect(result).toContain("count: 2 (showing first 2)");
+      expect(result).not.toContain("total");
     });
   });
 

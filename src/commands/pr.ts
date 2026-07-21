@@ -4,6 +4,11 @@ import { ghJson, ghExec, ghRaw } from "../gh.js";
 import { AxiError } from "../errors.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
+import {
+  fetchSearchTotal,
+  searchQualifier,
+  stateQualifiers,
+} from "../totals.js";
 import { getSuggestions } from "../suggestions.js";
 import {
   takeFlag,
@@ -326,21 +331,45 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
   // If we hit the limit, fetch the true totalCount via GraphQL
   let totalCount: number | undefined;
   if (items.length === limitNum && ctx) {
-    try {
-      const ghState = state.toUpperCase();
-      const statesFilter =
-        ghState === "ALL"
-          ? ""
-          : `states:[${ghState === "CLOSED" ? "CLOSED,MERGED" : ghState}]`;
-      const query = `{ repository(owner:"${ctx.owner}", name:"${ctx.name}") { pullRequests(${statesFilter}) { totalCount } } }`;
-      const gqlResult = await ghRaw(["api", "graphql", "-f", `query=${query}`]);
-      if (gqlResult.exitCode === 0) {
-        const parsed = JSON.parse(gqlResult.stdout);
-        totalCount =
-          parsed?.data?.repository?.pullRequests?.totalCount ?? undefined;
+    const filters: string[] = [];
+    if (label) filters.push(searchQualifier("label", label));
+    if (assignee) filters.push(searchQualifier("assignee", assignee));
+    if (author) filters.push(searchQualifier("author", author));
+    if (base) filters.push(searchQualifier("base", base));
+    if (head) filters.push(searchQualifier("head", head));
+    if (draft) filters.push("draft:true");
+
+    if (filters.length > 0) {
+      // Filtered listings must be counted through search; pullRequests
+      // totalCount cannot express assignee, author or draft at all.
+      totalCount = await fetchSearchTotal([
+        `repo:${ctx.nwo}`,
+        "is:pr",
+        ...stateQualifiers(state),
+        ...filters,
+      ]);
+    } else {
+      try {
+        const ghState = state.toUpperCase();
+        const statesFilter =
+          ghState === "ALL"
+            ? ""
+            : `states:[${ghState === "CLOSED" ? "CLOSED,MERGED" : ghState}]`;
+        const query = `{ repository(owner:"${ctx.owner}", name:"${ctx.name}") { pullRequests(${statesFilter}) { totalCount } } }`;
+        const gqlResult = await ghRaw([
+          "api",
+          "graphql",
+          "-f",
+          `query=${query}`,
+        ]);
+        if (gqlResult.exitCode === 0) {
+          const parsed = JSON.parse(gqlResult.stdout);
+          totalCount =
+            parsed?.data?.repository?.pullRequests?.totalCount ?? undefined;
+        }
+      } catch {
+        // fall back to limit-based message
       }
-    } catch {
-      // fall back to limit-based message
     }
   }
   const countLine = formatCountLine({
