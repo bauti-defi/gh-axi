@@ -52,20 +52,48 @@ export function takeBoolFlag(args: string[], flag: string): boolean {
   return true;
 }
 
-/** Collect all values for a repeatable flag in --flag value or --flag=value form. */
-export function getAllFlags(args: string[], flag: string): string[] {
+function collectAllFlags(
+  args: string[],
+  flag: string,
+  consume: boolean,
+): string[] {
   const result: string[] = [];
   const equalsPrefix = flagEqualsPrefix(flag);
-  for (let i = 0; i < args.length; i++) {
+  let i = 0;
+  while (i < args.length) {
     const arg = args[i];
     if (arg === flag && i + 1 < args.length) {
       result.push(args[i + 1]);
-      i++;
+      if (consume) args.splice(i, 2);
+      else i += 2;
     } else if (arg.startsWith(equalsPrefix)) {
       result.push(arg.slice(equalsPrefix.length));
+      if (consume) args.splice(i, 1);
+      else i++;
+    } else {
+      i++;
     }
   }
   return result;
+}
+
+/** Collect all values for a repeatable flag in --flag value or --flag=value form. */
+export function getAllFlags(args: string[], flag: string): string[] {
+  return collectAllFlags(args, flag, false);
+}
+
+/** Collect all values for a repeatable flag and remove them from args. */
+export function takeAllFlags(args: string[], flag: string): string[] {
+  return collectAllFlags(args, flag, true);
+}
+
+/** Append a repeatable flag once per value onto a gh argv array. */
+export function pushRepeated(
+  ghArgs: string[],
+  flag: string,
+  values: string[],
+): void {
+  for (const value of values) ghArgs.push(flag, value);
 }
 
 /** Get the first positional arg (non-flag) starting from startIndex. */

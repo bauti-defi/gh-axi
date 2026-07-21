@@ -5,6 +5,8 @@ import {
   hasFlag,
   takeBoolFlag,
   getAllFlags,
+  takeAllFlags,
+  pushRepeated,
   getPositional,
   requireNumber,
 } from "../src/args.js";
@@ -125,6 +127,73 @@ describe("getAllFlags", () => {
   it("skips flag at end of array with no value", () => {
     const args = ["--label", "bug", "--label"];
     expect(getAllFlags(args, "--label")).toEqual(["bug"]);
+  });
+
+  it("leaves args untouched", () => {
+    const args = ["--label", "bug", "--state", "open"];
+    getAllFlags(args, "--label");
+    expect(args).toEqual(["--label", "bug", "--state", "open"]);
+  });
+});
+
+describe("takeAllFlags", () => {
+  it("collects all values and removes them from args", () => {
+    const args = [
+      "--label",
+      "bug",
+      "--state",
+      "open",
+      "--label",
+      "help wanted",
+    ];
+    expect(takeAllFlags(args, "--label")).toEqual(["bug", "help wanted"]);
+    expect(args).toEqual(["--state", "open"]);
+  });
+
+  it("removes repeated --flag=value occurrences", () => {
+    const args = ["--label=bug", "--state", "open", "--label=help wanted"];
+    expect(takeAllFlags(args, "--label")).toEqual(["bug", "help wanted"]);
+    expect(args).toEqual(["--state", "open"]);
+  });
+
+  it("removes mixed --flag value and --flag=value occurrences", () => {
+    const args = ["--label", "bug", "--label=chore", "--state", "open"];
+    expect(takeAllFlags(args, "--label")).toEqual(["bug", "chore"]);
+    expect(args).toEqual(["--state", "open"]);
+  });
+
+  it("returns empty array and leaves args alone when flag is absent", () => {
+    const args = ["--state", "open"];
+    expect(takeAllFlags(args, "--label")).toEqual([]);
+    expect(args).toEqual(["--state", "open"]);
+  });
+
+  it("skips flag at end of array with no value", () => {
+    const args = ["--label", "bug", "--label"];
+    expect(takeAllFlags(args, "--label")).toEqual(["bug"]);
+    expect(args).toEqual(["--label"]);
+  });
+});
+
+describe("pushRepeated", () => {
+  it("appends the flag once per value", () => {
+    const ghArgs = ["issue", "edit", "1"];
+    pushRepeated(ghArgs, "--add-label", ["bug", "chore"]);
+    expect(ghArgs).toEqual([
+      "issue",
+      "edit",
+      "1",
+      "--add-label",
+      "bug",
+      "--add-label",
+      "chore",
+    ]);
+  });
+
+  it("appends nothing for an empty value list", () => {
+    const ghArgs = ["issue", "edit", "1"];
+    pushRepeated(ghArgs, "--add-label", []);
+    expect(ghArgs).toEqual(["issue", "edit", "1"]);
   });
 });
 

@@ -468,10 +468,15 @@ describe("prCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(2);
-      expect(callArgs).toContain("bug");
-      expect(callArgs).toContain("ready-for-agent");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "pr",
+        "edit",
+        "42",
+        "--add-label",
+        "bug",
+        "--add-label",
+        "ready-for-agent",
+      ]);
     });
 
     it("passes all repeated --remove-label flags to gh pr edit", async () => {
@@ -489,10 +494,15 @@ describe("prCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--remove-label")).toHaveLength(2);
-      expect(callArgs).toContain("needs-triage");
-      expect(callArgs).toContain("needs-info");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "pr",
+        "edit",
+        "42",
+        "--remove-label",
+        "needs-triage",
+        "--remove-label",
+        "needs-info",
+      ]);
     });
 
     it("passes all repeated assignee and reviewer flags to gh pr edit", async () => {
@@ -522,14 +532,27 @@ describe("prCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-assignee")).toHaveLength(2);
-      expect(callArgs.filter((a) => a === "--remove-assignee")).toHaveLength(2);
-      expect(callArgs.filter((a) => a === "--add-reviewer")).toHaveLength(2);
-      expect(callArgs.filter((a) => a === "--remove-reviewer")).toHaveLength(2);
-      expect(callArgs).toContain("hubot");
-      expect(callArgs).toContain("bob");
-      expect(callArgs).toContain("dave");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "pr",
+        "edit",
+        "42",
+        "--add-assignee",
+        "octocat",
+        "--add-assignee",
+        "hubot",
+        "--remove-assignee",
+        "monalisa",
+        "--remove-assignee",
+        "ghost",
+        "--add-reviewer",
+        "alice",
+        "--add-reviewer",
+        "bob",
+        "--remove-reviewer",
+        "carol",
+        "--remove-reviewer",
+        "dave",
+      ]);
     });
 
     it("still passes a single --add-label correctly (no regression)", async () => {
@@ -537,9 +560,51 @@ describe("prCommand", () => {
 
       await prCommand(["edit", "42", "--add-label", "bug"], ctx);
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(1);
-      expect(callArgs).toContain("bug");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "pr",
+        "edit",
+        "42",
+        "--add-label",
+        "bug",
+      ]);
+    });
+  });
+
+  describe("create with repeatable flags", () => {
+    it("passes all repeated --assignee and --reviewer flags to gh pr create", async () => {
+      mockedGhExec.mockResolvedValue("https://github.com/o/r/pull/42\n");
+
+      await prCommand(
+        [
+          "create",
+          "--title",
+          "T",
+          "--assignee",
+          "octocat",
+          "--assignee",
+          "hubot",
+          "--reviewer",
+          "alice",
+          "--reviewer",
+          "bob",
+        ],
+        ctx,
+      );
+
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "pr",
+        "create",
+        "--title",
+        "T",
+        "--assignee",
+        "octocat",
+        "--assignee",
+        "hubot",
+        "--reviewer",
+        "alice",
+        "--reviewer",
+        "bob",
+      ]);
     });
   });
 

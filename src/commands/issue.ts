@@ -7,6 +7,7 @@ import {
   hasFlag,
   getFlag,
   getAllFlags,
+  pushRepeated,
   getPositional,
   requireNumber,
   takeFlag,
@@ -64,7 +65,7 @@ flags{list}:
 flags{view}:
   --comments, --full (show complete body without truncation)
 flags{create}:
-  --title <text> (required), --body <text> or --body-file <path>, --assignee <login>, --label <name> (repeatable), --milestone <name>, --type <name>
+  --title <text> (required), --body <text> or --body-file <path>, --assignee <login> (repeatable), --label <name> (repeatable), --milestone <name>, --type <name>
 flags{edit}:
   --title, --body <text> or --body-file <path>, --add-label <name> (repeatable), --remove-label <name> (repeatable), --add-assignee <login> (repeatable), --remove-assignee <login> (repeatable), --milestone, --type <name>, --no-type
 flags{close}:
@@ -474,7 +475,7 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
   if (!title) throw new AxiError("--title is required", "VALIDATION_ERROR");
 
   const body = takeBody(args);
-  const assignee = getFlag(args, "--assignee");
+  const assignees = getAllFlags(args, "--assignee");
   const labels = getAllFlags(args, "--label");
   const milestone = getFlag(args, "--milestone");
   const project = getFlag(args, "--project");
@@ -488,8 +489,8 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
 
   const ghArgs = ["issue", "create", "--title", title];
   if (body !== undefined) ghArgs.push("--body", body);
-  if (assignee) ghArgs.push("--assignee", assignee);
-  for (const l of labels) ghArgs.push("--label", l);
+  pushRepeated(ghArgs, "--assignee", assignees);
+  pushRepeated(ghArgs, "--label", labels);
   if (milestone) ghArgs.push("--milestone", milestone);
   if (project) ghArgs.push("--project", project);
 
@@ -553,11 +554,10 @@ async function editIssue(args: string[], ctx?: RepoContext): Promise<string> {
   const ghArgs = ["issue", "edit", String(num)];
   if (title) ghArgs.push("--title", title);
   if (body !== undefined) ghArgs.push("--body", body);
-  for (const label of addLabels) ghArgs.push("--add-label", label);
-  for (const label of removeLabels) ghArgs.push("--remove-label", label);
-  for (const assignee of addAssignees) ghArgs.push("--add-assignee", assignee);
-  for (const assignee of removeAssignees)
-    ghArgs.push("--remove-assignee", assignee);
+  pushRepeated(ghArgs, "--add-label", addLabels);
+  pushRepeated(ghArgs, "--remove-label", removeLabels);
+  pushRepeated(ghArgs, "--add-assignee", addAssignees);
+  pushRepeated(ghArgs, "--remove-assignee", removeAssignees);
   if (milestone) ghArgs.push("--milestone", milestone);
 
   // Only call `gh issue edit` if there is a non-type field to update; otherwise

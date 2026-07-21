@@ -499,10 +499,15 @@ describe("issueCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(2);
-      expect(callArgs).toContain("bug");
-      expect(callArgs).toContain("ready-for-agent");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "edit",
+        "276",
+        "--add-label",
+        "bug",
+        "--add-label",
+        "ready-for-agent",
+      ]);
     });
 
     it("passes all repeated --remove-label flags to gh issue edit", async () => {
@@ -520,10 +525,15 @@ describe("issueCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--remove-label")).toHaveLength(2);
-      expect(callArgs).toContain("needs-triage");
-      expect(callArgs).toContain("needs-info");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "edit",
+        "276",
+        "--remove-label",
+        "needs-triage",
+        "--remove-label",
+        "needs-info",
+      ]);
     });
 
     it("applies adds and removes together without dropping any", async () => {
@@ -543,10 +553,17 @@ describe("issueCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(2);
-      expect(callArgs.filter((a) => a === "--remove-label")).toHaveLength(1);
-      expect(callArgs).toContain("ready-for-agent");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "edit",
+        "276",
+        "--add-label",
+        "bug",
+        "--add-label",
+        "ready-for-agent",
+        "--remove-label",
+        "needs-triage",
+      ]);
     });
 
     it("passes all repeated assignee flags to gh issue edit", async () => {
@@ -568,11 +585,19 @@ describe("issueCommand", () => {
         ctx,
       );
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-assignee")).toHaveLength(2);
-      expect(callArgs.filter((a) => a === "--remove-assignee")).toHaveLength(2);
-      expect(callArgs).toContain("hubot");
-      expect(callArgs).toContain("ghost");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "edit",
+        "276",
+        "--add-assignee",
+        "octocat",
+        "--add-assignee",
+        "hubot",
+        "--remove-assignee",
+        "monalisa",
+        "--remove-assignee",
+        "ghost",
+      ]);
     });
 
     it("still passes a single --add-label correctly (no regression)", async () => {
@@ -580,9 +605,50 @@ describe("issueCommand", () => {
 
       await issueCommand(["edit", "276", "--add-label", "bug"], ctx);
 
-      const callArgs = mockedGhExec.mock.calls[0][0] as string[];
-      expect(callArgs.filter((a) => a === "--add-label")).toHaveLength(1);
-      expect(callArgs).toContain("bug");
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "edit",
+        "276",
+        "--add-label",
+        "bug",
+      ]);
+    });
+  });
+
+  describe("create with repeatable flags", () => {
+    it("passes all repeated --assignee flags to gh issue create", async () => {
+      mockedGhExec.mockResolvedValue("https://github.com/o/r/issues/276\n");
+      mockedGhJson.mockResolvedValue({
+        number: 276,
+        title: "T",
+        state: "OPEN",
+        url: "https://github.com/o/r/issues/276",
+        id: "I_node276",
+      });
+
+      await issueCommand(
+        [
+          "create",
+          "--title",
+          "T",
+          "--assignee",
+          "octocat",
+          "--assignee",
+          "hubot",
+        ],
+        ctx,
+      );
+
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "T",
+        "--assignee",
+        "octocat",
+        "--assignee",
+        "hubot",
+      ]);
     });
   });
 
