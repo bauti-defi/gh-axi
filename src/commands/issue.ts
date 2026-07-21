@@ -17,6 +17,11 @@ import { takeBody, truncateBody } from "../body.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
 import { formatCountLine } from "../format.js";
 import {
+  fetchListTotal,
+  isSearchableMilestone,
+  type ListFilter,
+} from "../totals.js";
+import {
   field,
   pluck,
   joinArray,
@@ -254,20 +259,21 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
   const items = await ghJson<IssueListItem[]>(ghArgs, ctx);
   const isEmpty = items.length === 0;
 
-  // If we hit the limit, fetch the true totalCount via GraphQL
+  // Only a page truncated by the limit needs a total; a short page already
+  // shows every match.
   let totalCount: number | undefined;
-  if (items.length === limit && ctx) {
-    try {
-      const ghState = (state ?? "open").toUpperCase();
-      const query = `{ repository(owner:"${ctx.owner}", name:"${ctx.name}") { issues(states:[${ghState}]) { totalCount } } }`;
-      const gqlResult = await ghRaw(["api", "graphql", "-f", `query=${query}`]);
-      if (gqlResult.exitCode === 0) {
-        const parsed = JSON.parse(gqlResult.stdout);
-        totalCount = parsed?.data?.repository?.issues?.totalCount ?? undefined;
-      }
-    } catch {
-      // fall back to limit-based message
-    }
+  // A milestone number cannot be expressed as a search qualifier, so no total
+  // can be counted for it — no total beats a wrong one.
+  const countable = !milestone || isSearchableMilestone(milestone);
+  if (items.length === limit && ctx && countable) {
+    const filters: ListFilter[] = [];
+    for (const label of labels)
+      filters.push({ key: "label", value: label, list: true });
+    if (assignee) filters.push({ key: "assignee", value: assignee });
+    if (author) filters.push({ key: "author", value: author });
+    if (milestone) filters.push({ key: "milestone", value: milestone });
+
+    totalCount = await fetchListTotal(ctx, "issues", state, filters);
   }
   const countLine = formatCountLine({ count: items.length, limit, totalCount });
 

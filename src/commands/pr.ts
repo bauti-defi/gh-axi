@@ -4,6 +4,7 @@ import { ghJson, ghExec, ghRaw } from "../gh.js";
 import { AxiError } from "../errors.js";
 import { takeBody, truncateBody } from "../body.js";
 import { formatCountLine } from "../format.js";
+import { fetchListTotal, type ListFilter } from "../totals.js";
 import { getSuggestions } from "../suggestions.js";
 import {
   takeFlag,
@@ -323,25 +324,20 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
   const isEmpty = items.length === 0;
   const limitNum = Number(limit);
 
-  // If we hit the limit, fetch the true totalCount via GraphQL
+  // Only a page truncated by the limit needs a total; a short page already
+  // shows every match.
   let totalCount: number | undefined;
   if (items.length === limitNum && ctx) {
-    try {
-      const ghState = state.toUpperCase();
-      const statesFilter =
-        ghState === "ALL"
-          ? ""
-          : `states:[${ghState === "CLOSED" ? "CLOSED,MERGED" : ghState}]`;
-      const query = `{ repository(owner:"${ctx.owner}", name:"${ctx.name}") { pullRequests(${statesFilter}) { totalCount } } }`;
-      const gqlResult = await ghRaw(["api", "graphql", "-f", `query=${query}`]);
-      if (gqlResult.exitCode === 0) {
-        const parsed = JSON.parse(gqlResult.stdout);
-        totalCount =
-          parsed?.data?.repository?.pullRequests?.totalCount ?? undefined;
-      }
-    } catch {
-      // fall back to limit-based message
-    }
+    const filters: ListFilter[] = [];
+    for (const label of labels)
+      filters.push({ key: "label", value: label, list: true });
+    if (assignee) filters.push({ key: "assignee", value: assignee });
+    if (author) filters.push({ key: "author", value: author });
+    if (base) filters.push({ key: "base", value: base });
+    if (head) filters.push({ key: "head", value: head });
+    if (draft) filters.push({ key: "draft", value: "true" });
+
+    totalCount = await fetchListTotal(ctx, "pullRequests", state, filters);
   }
   const countLine = formatCountLine({
     count: items.length,
