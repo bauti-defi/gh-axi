@@ -83,12 +83,16 @@ function collectAllFlags(
   return result;
 }
 
-/** Collect all values for a repeatable flag in --flag value or --flag=value form. */
+/**
+ * Collect all values for a repeatable flag in --flag value or --flag=value form
+ * without modifying args. Throws VALIDATION_ERROR if any occurrence has a
+ * missing or blank value, rather than silently dropping it.
+ */
 export function getAllFlags(args: string[], flag: string): string[] {
   return collectAllFlags(args, flag, false);
 }
 
-/** Collect all values for a repeatable flag and remove them from args. */
+/** Like getAllFlags, but also removes every occurrence from args. */
 export function takeAllFlags(args: string[], flag: string): string[] {
   return collectAllFlags(args, flag, true);
 }
