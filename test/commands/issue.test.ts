@@ -230,7 +230,7 @@ describe("issueCommand", () => {
       expect(searchQuery).not.toContain("label:bug,gh-licenses");
     });
 
-    it("keeps the @me sentinel unquoted so search resolves it", async () => {
+    it("passes the @me sentinel through unquoted", async () => {
       mockedGhJson.mockResolvedValue([
         { number: 1, title: "A", state: "OPEN" },
         { number: 2, title: "B", state: "OPEN" },

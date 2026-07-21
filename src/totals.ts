@@ -18,10 +18,16 @@ const SEARCH_TOTAL_QUERY =
 /**
  * Build a `key:value` search qualifier.
  *
- * Values are quoted only when they contain whitespace, which keeps a label or
- * milestone with spaces a single term without stripping the meaning of search
- * sentinels such as `@me` — `assignee:"@me"` is read as a literal login and
- * matches nothing, while `assignee:@me` resolves to the current user.
+ * Values are quoted only when they contain whitespace, so a label or milestone
+ * with spaces stays a single term instead of splitting into a stray free-text
+ * word. Everything else is emitted verbatim, which keeps the qualifier byte
+ * identical to what the caller passed rather than JSON-escaped: search does not
+ * interpret `\"` or `\\` escape sequences, so quoting values that do not need it
+ * only risks mangling them.
+ *
+ * Sentinels such as `@me` survive either way — `assignee:@me` and
+ * `assignee:"@me"` both resolve to the authenticated user (verified against the
+ * live search API), so the quoting rule is about escaping, not sentinels.
  */
 export function searchQualifier(key: string, value: string): string {
   return /\s/.test(value) ? `${key}:"${value}"` : `${key}:${value}`;
