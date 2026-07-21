@@ -478,6 +478,62 @@ describe("issueCommand", () => {
     });
   });
 
+  describe("list and create with repeatable flags", () => {
+    it("passes all repeated --label filters to gh issue list", async () => {
+      mockedGhJson.mockResolvedValue([]);
+
+      await issueCommand(["list", "--label", "bug", "--label", "chore"], ctx);
+
+      expect(mockedGhJson.mock.calls[0][0]).toEqual([
+        "issue",
+        "list",
+        "--json",
+        "number,title,state,author,createdAt",
+        "--limit",
+        "30",
+        "--label",
+        "bug",
+        "--label",
+        "chore",
+      ]);
+    });
+
+    it("passes all repeated --project flags to gh issue create", async () => {
+      mockedGhExec.mockResolvedValue(
+        "https://github.com/octo/repo/issues/102\n",
+      );
+      mockedGhJson.mockResolvedValue({
+        number: 102,
+        title: "T",
+        state: "OPEN",
+        url: "https://github.com/octo/repo/issues/102",
+      });
+
+      await issueCommand(
+        ["create", "--title", "T", "--project", "Roadmap", "--project", "Q3"],
+        ctx,
+      );
+
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "issue",
+        "create",
+        "--title",
+        "T",
+        "--project",
+        "Roadmap",
+        "--project",
+        "Q3",
+      ]);
+    });
+
+    it("rejects an empty --label value instead of dropping it", async () => {
+      await expect(issueCommand(["list", "--label="], ctx)).rejects.toThrow(
+        "--label requires a value",
+      );
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+  });
+
   describe("edit with repeatable flags", () => {
     function mockEditedIssue(): void {
       mockedGhExec.mockResolvedValue("");

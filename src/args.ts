@@ -52,6 +52,12 @@ export function takeBoolFlag(args: string[], flag: string): boolean {
   return true;
 }
 
+function requireFlagValue(value: string, flag: string): string {
+  if (value.trim() === "")
+    throw new AxiError(`${flag} requires a value`, "VALIDATION_ERROR");
+  return value;
+}
+
 function collectAllFlags(
   args: string[],
   flag: string,
@@ -63,11 +69,11 @@ function collectAllFlags(
   while (i < args.length) {
     const arg = args[i];
     if (arg === flag && i + 1 < args.length) {
-      result.push(args[i + 1]);
+      result.push(requireFlagValue(args[i + 1], flag));
       if (consume) args.splice(i, 2);
       else i += 2;
     } else if (arg.startsWith(equalsPrefix)) {
-      result.push(arg.slice(equalsPrefix.length));
+      result.push(requireFlagValue(arg.slice(equalsPrefix.length), flag));
       if (consume) args.splice(i, 1);
       else i++;
     } else {

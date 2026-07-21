@@ -249,7 +249,7 @@ export const PR_HELP = `usage: gh-axi pr <subcommand> [flags]
 subcommands[15]:
   list, view <number>, create, edit <number>, close <number>, merge <number>, review <number>, checks <number>, diff <number>, checkout <number>, ready <number>, reopen <number>, comment <number>, update-branch <number>, revert <number>
 flags{list}:
-  --state <open|closed|all>, --label, --assignee, --author, --base, --head, --draft, --limit <n> (default 30), --fields <a,b,c>
+  --state <open|closed|all>, --label (repeatable), --assignee, --author, --base, --head, --draft, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
   --comments, --reviews (show review submissions and inline review comments), --full (show complete body without truncation)
 flags{create}:
@@ -290,7 +290,7 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
     PR_LIST_EXTRA_FIELDS,
   );
   const state = takeFlag(args, "--state") ?? "open";
-  const label = takeFlag(args, "--label");
+  const labels = takeAllFlags(args, "--label");
   const assignee = takeFlag(args, "--assignee");
   const author = takeFlag(args, "--author");
   const base = takeFlag(args, "--base");
@@ -312,7 +312,7 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
     "--limit",
     limit,
   ];
-  if (label) ghArgs.push("--label", label);
+  pushRepeated(ghArgs, "--label", labels);
   if (assignee) ghArgs.push("--assignee", assignee);
   if (author) ghArgs.push("--author", author);
   if (base) ghArgs.push("--base", base);
@@ -460,7 +460,7 @@ async function prCreate(args: string[], ctx?: RepoContext): Promise<string> {
   const reviewers = takeAllFlags(args, "--reviewer");
   const labels = takeAllFlags(args, "--label");
   const milestone = takeFlag(args, "--milestone");
-  const project = takeFlag(args, "--project");
+  const projects = takeAllFlags(args, "--project");
 
   const ghArgs = ["pr", "create", "--title", title];
   if (body !== undefined) ghArgs.push("--body", body);
@@ -471,7 +471,7 @@ async function prCreate(args: string[], ctx?: RepoContext): Promise<string> {
   pushRepeated(ghArgs, "--reviewer", reviewers);
   pushRepeated(ghArgs, "--label", labels);
   if (milestone) ghArgs.push("--milestone", milestone);
-  if (project) ghArgs.push("--project", project);
+  pushRepeated(ghArgs, "--project", projects);
 
   const stdout = await ghExec(ghArgs, ctx);
   // Parse PR number from the emitted URL: https://<host>/OWNER/REPO/pull/123

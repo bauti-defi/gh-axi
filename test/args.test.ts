@@ -134,6 +134,24 @@ describe("getAllFlags", () => {
     getAllFlags(args, "--label");
     expect(args).toEqual(["--label", "bug", "--state", "open"]);
   });
+
+  it("throws on an empty --flag= value", () => {
+    expect(() => getAllFlags(["--label="], "--label")).toThrow(
+      "--label requires a value",
+    );
+  });
+
+  it("throws on an empty --flag value", () => {
+    expect(() =>
+      getAllFlags(["--label", "", "--state", "open"], "--label"),
+    ).toThrow("--label requires a value");
+  });
+
+  it("throws when only one of several occurrences is empty", () => {
+    expect(() =>
+      getAllFlags(["--label", "bug", "--label="], "--label"),
+    ).toThrow(AxiError);
+  });
 });
 
 describe("takeAllFlags", () => {
@@ -172,6 +190,12 @@ describe("takeAllFlags", () => {
     const args = ["--label", "bug", "--label"];
     expect(takeAllFlags(args, "--label")).toEqual(["bug"]);
     expect(args).toEqual(["--label"]);
+  });
+
+  it("throws on an empty value instead of silently dropping it", () => {
+    expect(() => takeAllFlags(["--add-label", ""], "--add-label")).toThrow(
+      "--add-label requires a value",
+    );
   });
 });
 

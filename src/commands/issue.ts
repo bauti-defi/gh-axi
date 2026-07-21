@@ -61,7 +61,7 @@ export const ISSUE_HELP = `usage: gh-axi issue <subcommand> [flags]
 subcommands[14]:
   list, view <number>, create, edit <number>, close <number>, reopen <number>, comment <number>, delete <number>, lock <number>, unlock <number>, pin <number>, unpin <number>, transfer <number>, subissue <add|remove|list>
 flags{list}:
-  --state <open|closed|all>, --label <name>, --assignee <login>, --author <login>, --milestone <name>, --sort <created|updated|comments>, --limit <n> (default 30), --fields <a,b,c>
+  --state <open|closed|all>, --label <name> (repeatable), --assignee <login>, --author <login>, --milestone <name>, --sort <created|updated|comments>, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
   --comments, --full (show complete body without truncation)
 flags{create}:
@@ -223,7 +223,7 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
     ISSUE_LIST_EXTRA_FIELDS,
   );
   const state = getFlag(args, "--state");
-  const label = getFlag(args, "--label");
+  const labels = getAllFlags(args, "--label");
   const assignee = getFlag(args, "--assignee");
   const author = getFlag(args, "--author");
   const milestone = getFlag(args, "--milestone");
@@ -245,7 +245,7 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
     String(limit),
   ];
   if (state) ghArgs.push("--state", state);
-  if (label) ghArgs.push("--label", label);
+  pushRepeated(ghArgs, "--label", labels);
   if (assignee) ghArgs.push("--assignee", assignee);
   if (author) ghArgs.push("--author", author);
   if (milestone) ghArgs.push("--milestone", milestone);
@@ -478,7 +478,7 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
   const assignees = getAllFlags(args, "--assignee");
   const labels = getAllFlags(args, "--label");
   const milestone = getFlag(args, "--milestone");
-  const project = getFlag(args, "--project");
+  const projects = getAllFlags(args, "--project");
   const typeName = getOptionalRequiredFlag(args, "--type");
 
   // Resolve type up front so an invalid value fails before creating the issue.
@@ -492,7 +492,7 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
   pushRepeated(ghArgs, "--assignee", assignees);
   pushRepeated(ghArgs, "--label", labels);
   if (milestone) ghArgs.push("--milestone", milestone);
-  if (project) ghArgs.push("--project", project);
+  pushRepeated(ghArgs, "--project", projects);
 
   // gh issue create outputs the URL; use --json to get structured data
   // Unfortunately gh issue create doesn't support --json, so we parse the URL

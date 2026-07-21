@@ -459,6 +459,56 @@ describe("prCommand", () => {
     });
   });
 
+  describe("list and create with repeatable flags", () => {
+    it("passes all repeated --label filters to gh pr list", async () => {
+      mockedGhJson.mockResolvedValue([]);
+
+      await prCommand(["list", "--label", "bug", "--label", "chore"], ctx);
+
+      expect(mockedGhJson.mock.calls[0][0]).toEqual([
+        "pr",
+        "list",
+        "--json",
+        "number,title,state,author,isDraft,reviewDecision",
+        "--state",
+        "open",
+        "--limit",
+        "30",
+        "--label",
+        "bug",
+        "--label",
+        "chore",
+      ]);
+    });
+
+    it("passes all repeated --project flags to gh pr create", async () => {
+      mockedGhExec.mockResolvedValue("https://github.com/octo/repo/pull/7\n");
+
+      await prCommand(
+        ["create", "--title", "T", "--project", "Roadmap", "--project", "Q3"],
+        ctx,
+      );
+
+      expect(mockedGhExec.mock.calls[0][0]).toEqual([
+        "pr",
+        "create",
+        "--title",
+        "T",
+        "--project",
+        "Roadmap",
+        "--project",
+        "Q3",
+      ]);
+    });
+
+    it("rejects an empty --label value instead of dropping it", async () => {
+      await expect(prCommand(["list", "--label="], ctx)).rejects.toThrow(
+        "--label requires a value",
+      );
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+  });
+
   describe("edit with repeatable flags", () => {
     it("passes all repeated --add-label flags to gh pr edit", async () => {
       mockedGhExec.mockResolvedValue("");
