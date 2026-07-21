@@ -259,7 +259,8 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
   const items = await ghJson<IssueListItem[]>(ghArgs, ctx);
   const isEmpty = items.length === 0;
 
-  // If we hit the limit, fetch the true totalCount via GraphQL
+  // Only a page truncated by the limit needs a total; a short page already
+  // shows every match.
   let totalCount: number | undefined;
   // A milestone number cannot be expressed as a search qualifier, so no total
   // can be counted for it — no total beats a wrong one.

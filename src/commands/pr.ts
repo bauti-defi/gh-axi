@@ -324,7 +324,8 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
   const isEmpty = items.length === 0;
   const limitNum = Number(limit);
 
-  // If we hit the limit, fetch the true totalCount via GraphQL
+  // Only a page truncated by the limit needs a total; a short page already
+  // shows every match.
   let totalCount: number | undefined;
   if (items.length === limitNum && ctx) {
     const filters: ListFilter[] = [];
