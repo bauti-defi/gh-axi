@@ -159,6 +159,66 @@ describe('apiCommand', () => {
     );
   });
 
+  it('rejects a repeated --jq instead of silently dropping one expression', async () => {
+    await expect(
+      apiCommand(['/repos/octo/repo', '--jq', '.name', '--jq', '.full_name']),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('--jq'),
+    });
+    expect(mockedGhExec).not.toHaveBeenCalled();
+  });
+
+  it('rejects a repeated --template without echoing either value', async () => {
+    await expect(
+      apiCommand(['/repos/octo/repo', '--template={{.name}}', '--template={{.id}}']),
+    ).rejects.toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: expect.stringContaining('--template'),
+    });
+    await expect(
+      apiCommand(['/repos/octo/repo', '--template={{.name}}', '--template={{.id}}']),
+    ).rejects.not.toMatchObject({ message: expect.stringContaining('{{.name}}') });
+  });
+
+  it('does not forward a flag-shaped --header value as its own flag', async () => {
+    mockedGhExec.mockResolvedValue('{}');
+
+    await apiCommand(['/repos/octo/repo', '--header', '--jq=.x']);
+
+    const ghArgs = mockedGhExec.mock.calls[0][0];
+    expect(ghArgs).toEqual(expect.arrayContaining(['--header', '--jq=.x']));
+    expect(ghArgs).not.toContain('--jq');
+  });
+
+  it('truncates long string values in caller-shaped --jq output', async () => {
+    const blob = 'a'.repeat(50_000);
+    mockedGhExec.mockResolvedValue(JSON.stringify({ content: blob }));
+
+    const result = await apiCommand(['/repos/octo/repo/readme', '--jq', '{content: .content}']);
+
+    expect(result).toContain('... (truncated)');
+    expect(result.length).toBeLessThan(3000);
+  });
+
+  it('repeats --field and --header flags in order', async () => {
+    mockedGhExec.mockResolvedValue('{}');
+
+    await apiCommand([
+      'POST', '/repos/octo/repo/issues',
+      '--field', 'title=Bug', '--field=body=Broken',
+      '--header', 'A:1', '--header', 'B:2',
+    ]);
+
+    expect(mockedGhExec).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        '--field', 'title=Bug', '--field', 'body=Broken',
+        '--header', 'A:1', '--header', 'B:2',
+      ]),
+      undefined,
+    );
+  });
+
   it('rejects a value flag with no value', async () => {
     await expect(apiCommand(['/repos/octo/repo', '--jq'])).rejects.toMatchObject({
       code: 'VALIDATION_ERROR',

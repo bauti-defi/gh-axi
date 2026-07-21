@@ -2,7 +2,6 @@ import { encode } from '@toon-format/toon';
 import type { RepoContext } from '../context.js';
 import { ghExec } from '../gh.js';
 import { AxiError } from '../errors.js';
-import { hasFlag, getFlag, getAllFlags } from '../args.js';
 import { cleanBody } from '../body.js';
 
 export const API_HELP = `usage: gh-axi api [<method>] <path>
@@ -19,11 +18,16 @@ examples:
 
 const HTTP_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD']);
 
-/** Flags that consume the following argument as their value. */
-const VALUE_FLAGS = new Set(['--field', '--header', '--jq', '--template']);
+/** Value flags that may be given more than once, each occurrence forwarded to gh. */
+const REPEATABLE_VALUE_FLAGS = new Set(['--field', '--header']);
+
+/** Value flags that gh accepts only one of, so a repeat is a caller mistake. */
+const SINGLE_VALUE_FLAGS = new Set(['--jq', '--template']);
 
 /** Flags that stand alone and must not consume the following argument. */
 const BOOL_FLAGS = new Set(['--paginate']);
+
+const SUPPORTED_FLAGS = [...REPEATABLE_VALUE_FLAGS, ...SINGLE_VALUE_FLAGS, ...BOOL_FLAGS];
 
 /** The flag's name without any `=value` suffix, so errors never echo a value. */
 function flagName(arg: string): string {
@@ -31,44 +35,79 @@ function flagName(arg: string): string {
   return equals === -1 ? arg : arg.slice(0, equals);
 }
 
+interface ParsedApiArgs {
+  positionals: string[];
+  fields: string[];
+  headers: string[];
+  jq?: string;
+  template?: string;
+  paginate: boolean;
+}
+
 /**
- * Split args into positionals, rejecting anything unrecognised.
+ * Walk args once, collecting positionals and flag values and rejecting anything
+ * unrecognised.
  *
  * Unknown flags used to be skipped along with the following argument, so a flag
  * `gh-axi api` did not implement — `--jq` above all — silently vanished together
  * with its value and the caller got an unfiltered response that looked plausible.
  * Only flags known to take a value consume the next argument, which also keeps
  * `--paginate <path>` from swallowing the path.
+ *
+ * This single pass is also the only place that decides which flags consume a
+ * value: re-scanning args afterwards gave a second, value-blind notion of the
+ * same thing, so `--header --jq=.x` both consumed `--jq=.x` as the header value
+ * and forwarded it as a jq expression.
  */
-function parsePositionals(args: string[]): string[] {
-  const positionals: string[] = [];
+function parseArgs(args: string[]): ParsedApiArgs {
+  const parsed: ParsedApiArgs = {
+    positionals: [],
+    fields: [],
+    headers: [],
+    paginate: false,
+  };
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (!arg.startsWith('-')) {
-      positionals.push(arg);
+      parsed.positionals.push(arg);
       continue;
     }
     const name = flagName(arg);
     if (BOOL_FLAGS.has(name)) {
       if (name !== arg)
         throw new AxiError(`${name} does not take a value`, 'VALIDATION_ERROR');
+      parsed.paginate = true;
       continue;
     }
-    if (VALUE_FLAGS.has(name)) {
-      // `--flag=value` carries its own value; `--flag value` consumes the next arg.
-      if (name === arg) {
-        if (i + 1 >= args.length)
-          throw new AxiError(`${name} requires a value`, 'VALIDATION_ERROR');
-        i++;
-      }
-      continue;
+    if (!REPEATABLE_VALUE_FLAGS.has(name) && !SINGLE_VALUE_FLAGS.has(name)) {
+      throw new AxiError(
+        `unknown flag ${name} for gh-axi api. Supported flags: ${SUPPORTED_FLAGS.join(', ')}`,
+        'VALIDATION_ERROR',
+      );
     }
-    throw new AxiError(
-      `unknown flag ${name} for gh-axi api. Supported flags: ${[...VALUE_FLAGS, ...BOOL_FLAGS].join(', ')}`,
-      'VALIDATION_ERROR',
-    );
+    // `--flag=value` carries its own value; `--flag value` consumes the next arg.
+    let value: string;
+    if (name === arg) {
+      if (i + 1 >= args.length)
+        throw new AxiError(`${name} requires a value`, 'VALIDATION_ERROR');
+      value = args[++i];
+    } else {
+      value = arg.slice(name.length + 1);
+    }
+    if (name === '--field') {
+      parsed.fields.push(value);
+    } else if (name === '--header') {
+      parsed.headers.push(value);
+    } else {
+      // gh takes the last occurrence; discarding the earlier expression silently
+      // is the same failure this parser exists to prevent, so reject instead.
+      const key = name === '--jq' ? 'jq' : 'template';
+      if (parsed[key] !== undefined)
+        throw new AxiError(`${name} may only be given once`, 'VALIDATION_ERROR');
+      parsed[key] = value;
+    }
   }
-  return positionals;
+  return parsed;
 }
 
 /** Maximum length for raw (non-JSON) API output before truncation. */
@@ -84,8 +123,7 @@ const STRING_VALUE_TRUNCATION_LIMIT = 2000;
 export async function apiCommand(args: string[], ctx?: RepoContext): Promise<string> {
   if (args[0] === '--help' || args.length === 0) return API_HELP;
 
-  // Parse method and path from positional args
-  const positionals = parsePositionals(args);
+  const { positionals, fields, headers, jq, template, paginate } = parseArgs(args);
 
   let method: string;
   let path: string;
@@ -102,34 +140,31 @@ export async function apiCommand(args: string[], ctx?: RepoContext): Promise<str
 
   const ghArgs = ['api', path, '--method', method];
 
-  const fields = getAllFlags(args, '--field');
   for (const f of fields) {
     ghArgs.push('--field', f);
   }
 
-  const headers = getAllFlags(args, '--header');
   for (const h of headers) {
     ghArgs.push('--header', h);
   }
 
-  if (hasFlag(args, '--paginate')) ghArgs.push('--paginate');
+  if (paginate) ghArgs.push('--paginate');
 
-  const jq = getFlag(args, '--jq');
   if (jq !== undefined) ghArgs.push('--jq', jq);
 
-  const template = getFlag(args, '--template');
   if (template !== undefined) ghArgs.push('--template', template);
 
   // A caller who wrote a jq expression or template already chose the exact shape
   // they want, so noisy-field stripping would silently delete fields they asked
-  // for by name (`url`, `node_id`, ...).
+  // for by name (`url`, `node_id`, ...). The length clamp still applies, so a
+  // selected field cannot blow the caller's context with an unbounded blob.
   const callerShapedOutput = jq !== undefined || template !== undefined;
 
   // Try to parse as JSON, strip noisy fields, encode to TOON; fall back to raw output
   const raw = await ghExec(ghArgs, ctx);
   try {
     const data = JSON.parse(raw);
-    const cleaned = callerShapedOutput ? data : stripNoisyFields(data);
+    const cleaned = callerShapedOutput ? clampStrings(data) : stripNoisyFields(data);
     return encode(cleaned);
   } catch {
     // Not JSON — wrap in TOON envelope with truncation metadata
@@ -182,6 +217,34 @@ function collapseRepo(obj: Record<string, unknown>): Record<string, unknown> {
   return obj;
 }
 
+/** Clean and truncate a long string value (e.g. bodies, comments, blobs). */
+function clampString(value: string): string {
+  if (value.length <= LONG_STRING_CLEANUP_THRESHOLD) return value;
+  const cleaned = cleanBody(value);
+  if (cleaned.length > STRING_VALUE_TRUNCATION_LIMIT) {
+    return cleaned.slice(0, STRING_VALUE_TRUNCATION_LIMIT) + '... (truncated)';
+  }
+  return cleaned;
+}
+
+/**
+ * Bound string values without touching keys, for output the caller shaped with
+ * --jq/--template.
+ */
+function clampStrings(obj: unknown, depth = 0): unknown {
+  if (depth > 8) return obj;
+  if (Array.isArray(obj)) return obj.map((item) => clampStrings(item, depth + 1));
+  if (obj !== null && typeof obj === 'object') {
+    const result: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+      result[key] = clampStrings(value, depth + 1);
+    }
+    return result;
+  }
+  if (typeof obj === 'string') return clampString(obj);
+  return obj;
+}
+
 function stripNoisyFields(obj: unknown, depth = 0): unknown {
   if (depth > 8) return obj;
   if (Array.isArray(obj)) {
@@ -207,13 +270,6 @@ function stripNoisyFields(obj: unknown, depth = 0): unknown {
     }
     return result;
   }
-  // Clean and truncate long string values (e.g. bodies, comments)
-  if (typeof obj === 'string' && obj.length > LONG_STRING_CLEANUP_THRESHOLD) {
-    const s = cleanBody(obj);
-    if (s.length > STRING_VALUE_TRUNCATION_LIMIT) {
-      return s.slice(0, STRING_VALUE_TRUNCATION_LIMIT) + '... (truncated)';
-    }
-    return s;
-  }
+  if (typeof obj === 'string') return clampString(obj);
   return obj;
 }
