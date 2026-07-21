@@ -267,7 +267,8 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
   const countable = !milestone || isSearchableMilestone(milestone);
   if (items.length === limit && ctx && countable) {
     const filters: ListFilter[] = [];
-    if (label) filters.push({ key: "label", value: label, list: true });
+    for (const label of labels)
+      filters.push({ key: "label", value: label, list: true });
     if (assignee) filters.push({ key: "assignee", value: assignee });
     if (author) filters.push({ key: "author", value: author });
     if (milestone) filters.push({ key: "milestone", value: milestone });

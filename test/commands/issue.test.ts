@@ -230,6 +230,28 @@ describe("issueCommand", () => {
       expect(searchQuery).not.toContain("label:bug,gh-licenses");
     });
 
+    it("counts every value of a repeated --label flag", async () => {
+      mockedGhJson.mockResolvedValue([
+        { number: 1, title: "A", state: "OPEN" },
+        { number: 2, title: "B", state: "OPEN" },
+      ]);
+      mockedGhRaw.mockResolvedValue({
+        stdout: JSON.stringify({ data: { search: { issueCount: 4 } } }),
+        stderr: "",
+        exitCode: 0,
+      });
+
+      await issueCommand(
+        ["list", "--limit", "2", "--label", "bug", "--label", "help wanted"],
+        ctx,
+      );
+
+      const gqlArgs = mockedGhRaw.mock.calls[0][0] as string[];
+      const searchQuery = gqlArgs.find((a) => a.startsWith("q="));
+      expect(searchQuery).toContain("label:bug");
+      expect(searchQuery).toContain('label:"help wanted"');
+    });
+
     it("passes the @me sentinel through unquoted", async () => {
       mockedGhJson.mockResolvedValue([
         { number: 1, title: "A", state: "OPEN" },

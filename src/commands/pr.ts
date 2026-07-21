@@ -329,7 +329,8 @@ async function prList(args: string[], ctx?: RepoContext): Promise<string> {
   let totalCount: number | undefined;
   if (items.length === limitNum && ctx) {
     const filters: ListFilter[] = [];
-    if (label) filters.push({ key: "label", value: label, list: true });
+    for (const label of labels)
+      filters.push({ key: "label", value: label, list: true });
     if (assignee) filters.push({ key: "assignee", value: assignee });
     if (author) filters.push({ key: "author", value: author });
     if (base) filters.push({ key: "base", value: base });
