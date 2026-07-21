@@ -124,9 +124,11 @@ describe("getAllFlags", () => {
     expect(getAllFlags([], "--label")).toEqual([]);
   });
 
-  it("skips flag at end of array with no value", () => {
+  it("throws on a dangling flag at end of array with no value", () => {
     const args = ["--label", "bug", "--label"];
-    expect(getAllFlags(args, "--label")).toEqual(["bug"]);
+    expect(() => getAllFlags(args, "--label")).toThrow(
+      "--label requires a value",
+    );
   });
 
   it("leaves args untouched", () => {
@@ -186,10 +188,11 @@ describe("takeAllFlags", () => {
     expect(args).toEqual(["--state", "open"]);
   });
 
-  it("skips flag at end of array with no value", () => {
+  it("throws on a dangling flag at end of array with no value", () => {
     const args = ["--label", "bug", "--label"];
-    expect(takeAllFlags(args, "--label")).toEqual(["bug"]);
-    expect(args).toEqual(["--label"]);
+    expect(() => takeAllFlags(args, "--label")).toThrow(
+      "--label requires a value",
+    );
   });
 
   it("throws on an empty value instead of silently dropping it", () => {

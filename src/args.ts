@@ -68,8 +68,8 @@ function collectAllFlags(
   let i = 0;
   while (i < args.length) {
     const arg = args[i];
-    if (arg === flag && i + 1 < args.length) {
-      result.push(requireFlagValue(args[i + 1], flag));
+    if (arg === flag) {
+      result.push(requireFlagValue(args[i + 1] ?? "", flag));
       if (consume) args.splice(i, 2);
       else i += 2;
     } else if (arg.startsWith(equalsPrefix)) {

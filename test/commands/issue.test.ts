@@ -669,6 +669,15 @@ describe("issueCommand", () => {
         "bug",
       ]);
     });
+
+    it("rejects a dangling --add-label instead of editing nothing", async () => {
+      mockEditedIssue();
+
+      await expect(
+        issueCommand(["edit", "276", "--add-label"], ctx),
+      ).rejects.toThrow("--add-label requires a value");
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
   });
 
   describe("create with repeatable flags", () => {
