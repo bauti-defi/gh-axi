@@ -7,6 +7,7 @@ import {
   hasFlag,
   getFlag,
   getAllFlags,
+  pushRepeated,
   getPositional,
   requireNumber,
   takeFlag,
@@ -60,13 +61,13 @@ export const ISSUE_HELP = `usage: gh-axi issue <subcommand> [flags]
 subcommands[14]:
   list, view <number>, create, edit <number>, close <number>, reopen <number>, comment <number>, delete <number>, lock <number>, unlock <number>, pin <number>, unpin <number>, transfer <number>, subissue <add|remove|list>
 flags{list}:
-  --state <open|closed|all>, --label <name>, --assignee <login>, --author <login>, --milestone <name>, --sort <created|updated|comments>, --limit <n> (default 30), --fields <a,b,c>
+  --state <open|closed|all>, --label <name> (repeatable), --assignee <login>, --author <login>, --milestone <name>, --sort <created|updated|comments>, --limit <n> (default 30), --fields <a,b,c>
 flags{view}:
   --comments, --full (show complete body without truncation)
 flags{create}:
-  --title <text> (required), --body <text> or --body-file <path>, --assignee <login>, --label <name> (repeatable), --milestone <name>, --type <name>
+  --title <text> (required), --body <text> or --body-file <path>, --assignee <login> (repeatable), --label <name> (repeatable), --milestone <name>, --project <name> (repeatable), --type <name>
 flags{edit}:
-  --title, --body <text> or --body-file <path>, --add-label, --remove-label, --add-assignee, --remove-assignee, --milestone, --type <name>, --no-type
+  --title, --body <text> or --body-file <path>, --add-label <name> (repeatable), --remove-label <name> (repeatable), --add-assignee <login> (repeatable), --remove-assignee <login> (repeatable), --milestone, --type <name>, --no-type
 flags{close}:
   --reason <completed|not_planned>, --comment <text>
 flags{comment}:
@@ -222,7 +223,7 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
     ISSUE_LIST_EXTRA_FIELDS,
   );
   const state = getFlag(args, "--state");
-  const label = getFlag(args, "--label");
+  const labels = getAllFlags(args, "--label");
   const assignee = getFlag(args, "--assignee");
   const author = getFlag(args, "--author");
   const milestone = getFlag(args, "--milestone");
@@ -244,7 +245,7 @@ async function listIssues(args: string[], ctx?: RepoContext): Promise<string> {
     String(limit),
   ];
   if (state) ghArgs.push("--state", state);
-  if (label) ghArgs.push("--label", label);
+  pushRepeated(ghArgs, "--label", labels);
   if (assignee) ghArgs.push("--assignee", assignee);
   if (author) ghArgs.push("--author", author);
   if (milestone) ghArgs.push("--milestone", milestone);
@@ -474,10 +475,10 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
   if (!title) throw new AxiError("--title is required", "VALIDATION_ERROR");
 
   const body = takeBody(args);
-  const assignee = getFlag(args, "--assignee");
+  const assignees = getAllFlags(args, "--assignee");
   const labels = getAllFlags(args, "--label");
   const milestone = getFlag(args, "--milestone");
-  const project = getFlag(args, "--project");
+  const projects = getAllFlags(args, "--project");
   const typeName = getOptionalRequiredFlag(args, "--type");
 
   // Resolve type up front so an invalid value fails before creating the issue.
@@ -488,10 +489,10 @@ async function createIssue(args: string[], ctx?: RepoContext): Promise<string> {
 
   const ghArgs = ["issue", "create", "--title", title];
   if (body !== undefined) ghArgs.push("--body", body);
-  if (assignee) ghArgs.push("--assignee", assignee);
-  for (const l of labels) ghArgs.push("--label", l);
+  pushRepeated(ghArgs, "--assignee", assignees);
+  pushRepeated(ghArgs, "--label", labels);
   if (milestone) ghArgs.push("--milestone", milestone);
-  if (project) ghArgs.push("--project", project);
+  pushRepeated(ghArgs, "--project", projects);
 
   // gh issue create outputs the URL; use --json to get structured data
   // Unfortunately gh issue create doesn't support --json, so we parse the URL
@@ -535,10 +536,10 @@ async function editIssue(args: string[], ctx?: RepoContext): Promise<string> {
 
   const title = getFlag(args, "--title");
   const body = takeBody(args);
-  const addLabel = getFlag(args, "--add-label");
-  const removeLabel = getFlag(args, "--remove-label");
-  const addAssignee = getFlag(args, "--add-assignee");
-  const removeAssignee = getFlag(args, "--remove-assignee");
+  const addLabels = getAllFlags(args, "--add-label");
+  const removeLabels = getAllFlags(args, "--remove-label");
+  const addAssignees = getAllFlags(args, "--add-assignee");
+  const removeAssignees = getAllFlags(args, "--remove-assignee");
   const milestone = getFlag(args, "--milestone");
   const clearType = takeBoolFlag(args, "--no-type");
   const typeName = getOptionalRequiredFlag(args, "--type");
@@ -553,10 +554,10 @@ async function editIssue(args: string[], ctx?: RepoContext): Promise<string> {
   const ghArgs = ["issue", "edit", String(num)];
   if (title) ghArgs.push("--title", title);
   if (body !== undefined) ghArgs.push("--body", body);
-  if (addLabel) ghArgs.push("--add-label", addLabel);
-  if (removeLabel) ghArgs.push("--remove-label", removeLabel);
-  if (addAssignee) ghArgs.push("--add-assignee", addAssignee);
-  if (removeAssignee) ghArgs.push("--remove-assignee", removeAssignee);
+  pushRepeated(ghArgs, "--add-label", addLabels);
+  pushRepeated(ghArgs, "--remove-label", removeLabels);
+  pushRepeated(ghArgs, "--add-assignee", addAssignees);
+  pushRepeated(ghArgs, "--remove-assignee", removeAssignees);
   if (milestone) ghArgs.push("--milestone", milestone);
 
   // Only call `gh issue edit` if there is a non-type field to update; otherwise

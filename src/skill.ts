@@ -102,6 +102,7 @@ Run \`npx -y gh-axi --help\` for global flags, or \`npx -y gh-axi <command> --he
 - Truncated workflow logs keep the final 20,000 characters and may include a temp \`full_log\` path for targeted grep searches.
 - Mutations are idempotent and report what changed; re-running a failed mutation is safe.
 - For multi-line markdown bodies, comments, or release notes, write the text to a UTF-8 file and pass \`--body-file <path>\` or the release \`--notes-file <path>\` alias on commands that support file-backed text.
+- Label, assignee, reviewer, and project flags repeat: pass the flag once per value, e.g. \`issue edit 42 --add-label bug --add-label chore\`, and every value is applied. A repeated flag with a missing or blank value is rejected, never silently dropped.
 - Secret values are stdin-only: \`echo -n "<value>" | npx -y gh-axi secret set <name>\`.
 - Do not pass secrets with \`--body\` or \`-b\`; flags are visible in the \`gh-axi\` process argv.
 - Scope a secret to a deployment environment with \`--env\`/\`-e <environment>\` on \`secret list\`, \`set\`, and \`delete\`; omit it for repository scope. Other \`gh secret\` scopes (\`--org\`, \`--user\`, \`--app\`) are rejected, not silently ignored.

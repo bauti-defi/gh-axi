@@ -85,6 +85,7 @@ gh-axi                          # dashboard - live state, no args needed
 gh-axi issue list               # list issues in current repo
 gh-axi issue subissue list 16   # list sub-issues for issue #16
 gh-axi pr view 42               # view pull request #42
+gh-axi issue edit 42 --add-label bug --add-label chore  # repeat a flag per value
 gh-axi run list -R owner/repo   # list workflow runs for a specific repo
 gh-axi issue list --hostname git.example.com  # target a GitHub Enterprise host
 gh-axi run view 123456 --job 789012       # inspect a single job within a run
@@ -102,6 +103,10 @@ gh-axi update                   # upgrade a global install
 For multi-line issue, PR, review, or comment text, write Markdown to a UTF-8 file and pass `--body-file <path>` on the relevant command.
 For releases, `--body` and `--body-file` are aliases for release notes, alongside `--notes` and `--notes-file`.
 For multi-line variable values, pipe stdin to `gh-axi variable set <name>`; `--body`/`-b` is for inline values only.
+
+The label, assignee, reviewer, and project flags of `issue create`/`edit` and `pr create`/`edit` are repeatable: pass the flag once per value and every value reaches `gh`.
+`issue list` and `pr list` accept repeated `--label` filters the same way.
+A repeated flag with a missing or empty value (`--add-label` with nothing after it, or `--add-label=`) fails with a validation error instead of being silently dropped.
 
 Long `run view --log` and `run view --log-failed` output shows the last 20,000 characters so CI failures stay visible.
 When truncation happens, gh-axi best-effort saves the complete log to a temp file, includes it as `full_log`, and prints a `help:` hint telling agents to grep that file for earlier context.
