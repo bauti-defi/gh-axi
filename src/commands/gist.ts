@@ -1,4 +1,5 @@
-import { ghJson } from "../gh.js";
+import { encode } from "@toon-format/toon";
+import { ghJson, ghExec } from "../gh.js";
 import { AxiError } from "../errors.js";
 import { getFlag, hasFlag } from "../args.js";
 import {
@@ -17,14 +18,16 @@ import { getSuggestions } from "../suggestions.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
 
 export const GIST_HELP = `usage: gh-axi gist <subcommand> [flags]
-subcommands[1]:
-  list
+subcommands[3]:
+  list, delete <id|url>, clone <id|url>
 flags{list}:
   --limit <n> (default 100), --public, --secret, --fields <field,...>
 examples:
   gh-axi gist list
   gh-axi gist list --public --limit 20
-  gh-axi gist list --fields url,owner,created`;
+  gh-axi gist list --fields url,owner,created
+  gh-axi gist delete <id|url>
+  gh-axi gist clone <id|url>`;
 
 /** Maximum items per /gists page. Also the per_page ceiling for this endpoint. */
 const PAGE_SIZE = 100;
@@ -128,6 +131,60 @@ async function listGists(args: string[]): Promise<string> {
   ]);
 }
 
+// deleteGist has no ctx parameter — gist is user-scoped.
+// gh gist delete refuses to run non-interactively without --yes;
+// always pass it so this command never prompts.
+async function deleteGist(args: string[]): Promise<string> {
+  const positionals = args.filter((a) => !a.startsWith("--"));
+  const selector = positionals[1]; // positionals[0] == "delete"
+  const extra = positionals[2];
+
+  if (!selector)
+    throw new AxiError(
+      "Gist is required: gh-axi gist delete <id|url>",
+      "VALIDATION_ERROR",
+    );
+  if (extra)
+    throw new AxiError(
+      `Unexpected argument: ${extra}`,
+      "VALIDATION_ERROR",
+    );
+
+  await ghExec(["gist", "delete", selector, "--yes"]);
+  const suggestions = getSuggestions({ domain: "gist", action: "delete" });
+  return renderOutput([
+    encode({ deleted: selector }),
+    renderHelp(suggestions),
+  ]);
+}
+
+// cloneGist has no ctx parameter — gist is user-scoped.
+// Mirrors cloneRepo exactly: take the selector, shell out, report ok.
+// No target-directory or git-flags passthrough — matches repo clone restraint.
+async function cloneGist(args: string[]): Promise<string> {
+  const positionals = args.filter((a) => !a.startsWith("--"));
+  const selector = positionals[1]; // positionals[0] == "clone"
+  const extra = positionals[2];
+
+  if (!selector)
+    throw new AxiError(
+      "Gist is required: gh-axi gist clone <id|url>",
+      "VALIDATION_ERROR",
+    );
+  if (extra)
+    throw new AxiError(
+      `Unexpected argument: ${extra}`,
+      "VALIDATION_ERROR",
+    );
+
+  await ghExec(["gist", "clone", selector]);
+  const suggestions = getSuggestions({ domain: "gist", action: "clone" });
+  return renderOutput([
+    encode({ clone: "ok", gist: selector }),
+    renderHelp(suggestions),
+  ]);
+}
+
 // gistCommand has no ctx parameter — gist is user-scoped and ctx must never
 // reach ghJson. TypeScript accepts (args: string[]) as CommandFn because
 // fewer parameters are always assignable to a type with more optional params.
@@ -139,9 +196,13 @@ export async function gistCommand(args: string[]): Promise<string> {
   switch (sub) {
     case "list":
       return listGists(args);
+    case "delete":
+      return deleteGist(args);
+    case "clone":
+      return cloneGist(args);
     default:
       return renderError(`Unknown subcommand: ${sub}`, "VALIDATION_ERROR", [
-        "Available subcommands: list",
+        "Available subcommands: list, delete, clone",
       ]);
   }
 }

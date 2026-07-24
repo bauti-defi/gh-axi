@@ -6,11 +6,12 @@ vi.mock("../../src/gh.js", () => ({
   ghRaw: vi.fn(),
 }));
 
-import { ghJson } from "../../src/gh.js";
+import { ghJson, ghExec } from "../../src/gh.js";
 import { AxiError } from "../../src/errors.js";
 import { gistCommand, GIST_HELP } from "../../src/commands/gist.js";
 
 const mockedGhJson = vi.mocked(ghJson);
+const mockedGhExec = vi.mocked(ghExec);
 
 function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -226,6 +227,117 @@ describe("gistCommand", () => {
       await expect(
         gistCommand(["list", "--limit", "-5"]),
       ).rejects.toThrow(AxiError);
+    });
+  });
+
+  describe("delete", () => {
+    it("deletes the gist and reports what was deleted", async () => {
+      mockedGhExec.mockResolvedValue("");
+      const result = await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      expect(result).toContain("abc1230000000000000000000000000a");
+    });
+
+    // Mutation-test anchor: if --yes is removed from the ghExec call, the argv
+    // assertion below will fail. Verified by reverting the --yes and watching
+    // this test go red, then restoring.
+    it("always passes --yes to gh gist delete", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
+      expect(capturedArgs).toContain("--yes");
+    });
+
+    it("passes the selector to gh gist delete as argv", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
+      expect(capturedArgs).toContain("abc1230000000000000000000000000a");
+      expect(capturedArgs[0]).toBe("gist");
+      expect(capturedArgs[1]).toBe("delete");
+    });
+
+    it("throws VALIDATION_ERROR when no selector is given", async () => {
+      await expect(gistCommand(["delete"])).rejects.toThrow(AxiError);
+    });
+
+    it("throws VALIDATION_ERROR for surplus positional arguments", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["delete", "abc1230000000000000000000000000a", "extra"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("accepts a gist URL as the selector", async () => {
+      mockedGhExec.mockResolvedValue("");
+      const url = "https://gist.github.com/octocat/abc1230000000000000000000000000a";
+      const result = await gistCommand(["delete", url]);
+      expect(result).toContain(url);
+      const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
+      expect(capturedArgs).toContain(url);
+      expect(capturedArgs).toContain("--yes");
+    });
+
+    it("emits contextual help suggestions", async () => {
+      mockedGhExec.mockResolvedValue("");
+      const result = await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      expect(result).toContain("help[");
+      expect(result).toContain("gist list");
+    });
+
+    it("never passes ctx to ghExec — gist is user-scoped", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      expect(mockedGhExec.mock.calls[0]![1]).toBeUndefined();
+    });
+  });
+
+  describe("clone", () => {
+    it("clones the gist and reports ok", async () => {
+      mockedGhExec.mockResolvedValue("");
+      const result = await gistCommand(["clone", "abc1230000000000000000000000000a"]);
+      expect(result).toContain("ok");
+    });
+
+    it("passes the selector to gh gist clone as argv", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await gistCommand(["clone", "abc1230000000000000000000000000a"]);
+      const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
+      expect(capturedArgs[0]).toBe("gist");
+      expect(capturedArgs[1]).toBe("clone");
+      expect(capturedArgs).toContain("abc1230000000000000000000000000a");
+    });
+
+    it("throws VALIDATION_ERROR when no selector is given", async () => {
+      await expect(gistCommand(["clone"])).rejects.toThrow(AxiError);
+    });
+
+    it("throws VALIDATION_ERROR for surplus positional arguments", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["clone", "abc1230000000000000000000000000a", "extra"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("accepts a gist URL as the selector", async () => {
+      mockedGhExec.mockResolvedValue("");
+      const url = "https://gist.github.com/octocat/abc1230000000000000000000000000a";
+      const result = await gistCommand(["clone", url]);
+      expect(result).toContain("ok");
+      const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
+      expect(capturedArgs).toContain(url);
+    });
+
+    it("emits contextual help suggestions", async () => {
+      mockedGhExec.mockResolvedValue("");
+      const result = await gistCommand(["clone", "abc1230000000000000000000000000a"]);
+      expect(result).toContain("help[");
+      expect(result).toContain("gist list");
+    });
+
+    it("never passes ctx to ghExec — gist is user-scoped", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await gistCommand(["clone", "abc1230000000000000000000000000a"]);
+      expect(mockedGhExec.mock.calls[0]![1]).toBeUndefined();
     });
   });
 });
