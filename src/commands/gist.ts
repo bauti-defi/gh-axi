@@ -1,7 +1,7 @@
 import { encode } from "@toon-format/toon";
-import { ghJson, ghExec } from "../gh.js";
+import { ghJson, ghExec, ghExecWithStdin } from "../gh.js";
 import { AxiError } from "../errors.js";
-import { getFlag, hasFlag } from "../args.js";
+import { getFlag, hasFlag, takeFlag, takeBoolFlag, takeAllFlags } from "../args.js";
 import {
   field,
   custom,
@@ -9,6 +9,7 @@ import {
   pluck,
   renderList,
   renderHelp,
+  renderDetail,
   renderOutput,
   renderError,
   type FieldDef,
@@ -16,16 +17,25 @@ import {
 import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
+import { isStdinTTY, readStdin } from "../stdin.js";
 
 export const GIST_HELP = `usage: gh-axi gist <subcommand> [flags]
-subcommands[3]:
-  list, delete <id|url>, clone <id|url>
+subcommands[4]:
+  list, create, delete <id|url>, clone <id|url>
 flags{list}:
   --limit <n> (default 100), --public, --secret, --fields <field,...>
+flags{create}:
+  --public (required, mutually exclusive with --secret)
+  --secret (required, mutually exclusive with --public)
+  --file <path> (repeatable), --filename <name> (for piped content)
+  -d/--desc <text>
 examples:
   gh-axi gist list
   gh-axi gist list --public --limit 20
   gh-axi gist list --fields url,owner,created
+  gh-axi gist create notes.md --public --desc "My notes"
+  gh-axi gist create --file a.py --file b.py --secret
+  echo "content" | gh-axi gist create --filename hello.txt --public
   gh-axi gist delete <id|url>
   gh-axi gist clone <id|url>`;
 
@@ -185,6 +195,138 @@ async function cloneGist(args: string[]): Promise<string> {
   ]);
 }
 
+// createGist deliberately has no ctx parameter. gist is user-scoped and
+// gh gist create has no --repo flag; the guard is enforced structurally.
+// See AGENTS.md "User-scoped commands" section.
+async function createGist(args: string[]): Promise<string> {
+  // Visibility: required and mutually exclusive — check before any other work.
+  const wantPublic = takeBoolFlag(args, "--public");
+  const wantSecret = takeBoolFlag(args, "--secret");
+
+  if (wantPublic && wantSecret) {
+    throw new AxiError(
+      "--public and --secret are mutually exclusive",
+      "VALIDATION_ERROR",
+    );
+  }
+  if (!wantPublic && !wantSecret) {
+    throw new AxiError(
+      "gist create requires --public or --secret; neither was given\n" +
+        "A secret gist is unlisted (anyone with the URL can read it), not private.",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  // Description: -d and --desc are aliases; take both.
+  const descShort = takeFlag(args, "-d");
+  const descLong = takeFlag(args, "--desc");
+  const desc = descShort ?? descLong;
+
+  // Input form flags. takeAllFlags throws VALIDATION_ERROR on dangling / blank.
+  const filename = takeFlag(args, "--filename");
+  const fileFlags = takeAllFlags(args, "--file");
+
+  // After consuming all known flags, args[0] === "create" (subcommand name).
+  // Anything at index 1+ is either a positional file path or an unknown flag.
+  const remaining = args.slice(1);
+  const unknownFlags = remaining.filter((a) => a.startsWith("--"));
+  if (unknownFlags.length > 0) {
+    throw new AxiError(
+      `Unknown flag(s): ${unknownFlags.join(", ")}`,
+      "VALIDATION_ERROR",
+    );
+  }
+  const positionals = remaining.filter((a) => !a.startsWith("--"));
+
+  // Mixing the two file-on-disk input forms is a hard error.
+  if (positionals.length > 0 && fileFlags.length > 0) {
+    throw new AxiError(
+      "Cannot mix positional paths with --file; use one form: " +
+        "either `gist create a.py b.py` or `gist create --file a.py --file b.py`",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  // Mixing file-on-disk with stdin/--filename is also a hard error.
+  const hasFileArgs = positionals.length > 0 || fileFlags.length > 0;
+  if (hasFileArgs && filename !== undefined) {
+    throw new AxiError(
+      "Cannot mix file paths with --filename; use one input form",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  // At least one input source must be provided.
+  if (!hasFileArgs && filename === undefined) {
+    throw new AxiError(
+      "gist create requires at least one file: pass positional path(s), " +
+        "--file <path>, or pipe content with --filename <name>",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const visibility = wantPublic ? "public" : "secret";
+
+  // Build the base gh argv. Only --public changes default visibility (gh
+  // defaults to secret, so we never pass --secret to gh).
+  const ghArgs = ["gist", "create"];
+  if (wantPublic) ghArgs.push("--public");
+  if (desc) ghArgs.push("-d", desc);
+
+  let stdout: string;
+
+  if (filename !== undefined) {
+    // Stdin form: pipe content to gh with --filename.
+    // Any condition that would make gh prompt or open $EDITOR must be caught
+    // before invoking gh — an agent cannot answer a prompt.
+    if (isStdinTTY()) {
+      throw new AxiError(
+        "--filename requires piped content on stdin; no pipe was detected",
+        "VALIDATION_ERROR",
+        [
+          `echo 'content' | gh-axi gist create --filename <name> --public`,
+        ],
+      );
+    }
+    const content = await readStdin();
+    ghArgs.push("--filename", filename);
+    // No ctx — gist is user-scoped; buildArgs must not append --repo.
+    stdout = await ghExecWithStdin(ghArgs, content);
+  } else {
+    // File form: positionals take precedence; fileFlags are translated to positionals.
+    const paths = positionals.length > 0 ? positionals : fileFlags;
+    ghArgs.push(...paths);
+    // No ctx — gist is user-scoped; buildArgs must not append --repo.
+    stdout = await ghExec(ghArgs);
+  }
+
+  // gh gist create prints only the HTML URL to stdout (status messages go to
+  // stderr). Parse the id from the URL's last path segment, matching the
+  // pattern used by pr create's URL → number extraction.
+  const url = stdout.trim().split("\n").pop()?.trim() ?? "";
+  const id = url.split("/").pop() ?? "";
+
+  const navSuggestions = getSuggestions({ domain: "gist", action: "create", id });
+  const helpLines: string[] = [];
+  // Secret gists are unlisted, not private. Surface this before navigation hints
+  // so the agent sees the warning even if it stops reading after the first line.
+  if (visibility === "secret") {
+    helpLines.push(
+      "a secret gist is unlisted, not private — anyone with the URL can read it",
+    );
+  }
+  helpLines.push(...navSuggestions);
+
+  return renderOutput([
+    renderDetail("created", { id, url, visibility }, [
+      field("id"),
+      field("url"),
+      field("visibility"),
+    ]),
+    renderHelp(helpLines),
+  ]);
+}
+
 // gistCommand has no ctx parameter — gist is user-scoped and ctx must never
 // reach ghJson. TypeScript accepts (args: string[]) as CommandFn because
 // fewer parameters are always assignable to a type with more optional params.
@@ -196,13 +338,15 @@ export async function gistCommand(args: string[]): Promise<string> {
   switch (sub) {
     case "list":
       return listGists(args);
+    case "create":
+      return createGist(args);
     case "delete":
       return deleteGist(args);
     case "clone":
       return cloneGist(args);
     default:
       return renderError(`Unknown subcommand: ${sub}`, "VALIDATION_ERROR", [
-        "Available subcommands: list, delete, clone",
+        "Available subcommands: list, create, delete, clone",
       ]);
   }
 }

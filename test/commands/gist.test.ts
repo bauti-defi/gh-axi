@@ -3,15 +3,25 @@ import { vi, describe, it, expect, beforeEach } from "vitest";
 vi.mock("../../src/gh.js", () => ({
   ghJson: vi.fn(),
   ghExec: vi.fn(),
+  ghExecWithStdin: vi.fn(),
   ghRaw: vi.fn(),
 }));
 
-import { ghJson, ghExec } from "../../src/gh.js";
+vi.mock("../../src/stdin.js", () => ({
+  isStdinTTY: vi.fn(),
+  readStdin: vi.fn(),
+}));
+
+import { ghJson, ghExec, ghExecWithStdin } from "../../src/gh.js";
+import { isStdinTTY, readStdin } from "../../src/stdin.js";
 import { AxiError } from "../../src/errors.js";
 import { gistCommand, GIST_HELP } from "../../src/commands/gist.js";
 
 const mockedGhJson = vi.mocked(ghJson);
 const mockedGhExec = vi.mocked(ghExec);
+const mockedGhExecWithStdin = vi.mocked(ghExecWithStdin);
+const mockedIsStdinTTY = vi.mocked(isStdinTTY);
+const mockedReadStdin = vi.mocked(readStdin);
 
 function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -34,9 +44,20 @@ function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> 
 const ID_ALPHA = "aaaa0000000000000000000000000000"; // used as the public gist
 const ID_BRAVO = "bbbb1111111111111111111111111111"; // used as the secret gist
 
+// A URL whose last path segment is the gist ID. Used as the mock return value
+// from gh gist create to test ID extraction.
+const CREATE_ID = "cc2233445566778899aabbccddeeff00";
+const CREATE_URL = `https://gist.github.com/octocat/${CREATE_ID}`;
+
 describe("gistCommand", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // Default for create: gh prints the gist URL to stdout.
+    mockedGhExec.mockResolvedValue(`${CREATE_URL}\n`);
+    mockedGhExecWithStdin.mockResolvedValue(`${CREATE_URL}\n`);
+    // Default: stdin is piped (not a TTY) with some content.
+    mockedIsStdinTTY.mockReturnValue(false);
+    mockedReadStdin.mockResolvedValue("file content");
   });
 
   describe("router", () => {
@@ -52,6 +73,7 @@ describe("gistCommand", () => {
       const result = await gistCommand(["frobnicate"]);
       expect(result).toContain("Unknown subcommand: frobnicate");
       expect(result).toContain("list");
+      expect(result).toContain("create");
     });
   });
 
@@ -338,6 +360,231 @@ describe("gistCommand", () => {
       mockedGhExec.mockResolvedValue("");
       await gistCommand(["clone", "abc1230000000000000000000000000a"]);
       expect(mockedGhExec.mock.calls[0]![1]).toBeUndefined();
+    });
+  });
+
+  // ─── gist create ──────────────────────────────────────────────────────────
+  //
+  // Design: writes go through `gh gist create` (not the API) so gh's binary
+  // sniffing and blank-file rejection stay in effect. Visibility is required
+  // and mutually exclusive. Two file-on-disk input forms (positionals, --file)
+  // must not be mixed. Content may also be piped via stdin + --filename.
+  // No ctx parameter — gist is user-scoped (AGENTS.md "User-scoped commands").
+
+  describe("create", () => {
+    // ── Visibility validation ───────────────────────────────────────────────
+
+    it("rejects when neither --public nor --secret is given", async () => {
+      await expect(
+        gistCommand(["create", "a.py"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects when both --public and --secret are given", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--public", "--secret"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    // ── Positional file form ────────────────────────────────────────────────
+
+    it("creates a public gist from positional files and reports id+url+visibility", async () => {
+      const result = await gistCommand(["create", "a.py", "b.py", "--public"]);
+      expect(result).toContain(CREATE_ID);
+      expect(result).toContain(CREATE_URL);
+      expect(result).toContain("public");
+    });
+
+    it("passes positional file paths to gh argv", async () => {
+      // Mutation target: if `ghArgs.push(...paths)` is removed, "a.py" and "b.py"
+      // disappear from the argv and this test fails.
+      await gistCommand(["create", "a.py", "b.py", "--public"]);
+      const args = mockedGhExec.mock.calls[0][0] as string[];
+      expect(args).toContain("a.py");
+      expect(args).toContain("b.py");
+    });
+
+    // ── --file flag form ────────────────────────────────────────────────────
+
+    it("creates a gist from --file flags and reports id", async () => {
+      const result = await gistCommand([
+        "create",
+        "--file",
+        "a.py",
+        "--file",
+        "b.py",
+        "--public",
+      ]);
+      expect(result).toContain(CREATE_ID);
+    });
+
+    it("passes every --file value to gh argv (repeatable, no silent drops)", async () => {
+      // Mutation target: if only the first --file value is consumed (first-only
+      // bug, #55/#57/#75) the second value "b.py" is absent and this test fails.
+      await gistCommand([
+        "create",
+        "--file",
+        "a.py",
+        "--file",
+        "b.py",
+        "--public",
+      ]);
+      const args = mockedGhExec.mock.calls[0][0] as string[];
+      expect(args).toContain("a.py");
+      expect(args).toContain("b.py");
+    });
+
+    it("rejects mixing positional paths with --file", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--file", "b.py", "--public"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects a dangling --file with no value following it", async () => {
+      // takeAllFlags throws VALIDATION_ERROR when a flag's value is missing.
+      await expect(
+        gistCommand(["create", "--file", "--public"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects a blank --file= value", async () => {
+      await expect(
+        gistCommand(["create", "--file=", "--public"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    // ── Stdin / --filename form ─────────────────────────────────────────────
+
+    it("creates a gist from piped stdin with --filename", async () => {
+      const result = await gistCommand([
+        "create",
+        "--filename",
+        "foo.txt",
+        "--public",
+      ]);
+      expect(result).toContain(CREATE_ID);
+      expect(mockedGhExecWithStdin).toHaveBeenCalledOnce();
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("passes --filename value to gh argv in stdin form", async () => {
+      // Mutation target: if `ghArgs.push("--filename", filename)` is removed,
+      // --filename and foo.txt disappear from gh argv and this test fails.
+      await gistCommand(["create", "--filename", "foo.txt", "--public"]);
+      const args = mockedGhExecWithStdin.mock.calls[0][0] as string[];
+      expect(args).toContain("--filename");
+      expect(args).toContain("foo.txt");
+    });
+
+    it("pipes stdin content to gh in stdin form", async () => {
+      mockedReadStdin.mockResolvedValue("the content");
+      await gistCommand(["create", "--filename", "foo.txt", "--public"]);
+      const input = mockedGhExecWithStdin.mock.calls[0][1] as string;
+      expect(input).toBe("the content");
+    });
+
+    it("rejects stdin form when stdin is a TTY (no pipe detected)", async () => {
+      mockedIsStdinTTY.mockReturnValue(true);
+      await expect(
+        gistCommand(["create", "--filename", "foo.txt", "--public"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects mixing --filename with positional paths", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--filename", "foo.txt", "--public"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects mixing --filename with --file", async () => {
+      await expect(
+        gistCommand([
+          "create",
+          "--file",
+          "a.py",
+          "--filename",
+          "foo.txt",
+          "--public",
+        ]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    // ── Description flag ────────────────────────────────────────────────────
+
+    it("passes --desc to gh argv as -d", async () => {
+      await gistCommand(["create", "a.py", "--public", "--desc", "My notes"]);
+      const args = mockedGhExec.mock.calls[0][0] as string[];
+      expect(args).toContain("-d");
+      expect(args).toContain("My notes");
+    });
+
+    it("also accepts -d short form for description", async () => {
+      await gistCommand(["create", "a.py", "--public", "-d", "Short desc"]);
+      const args = mockedGhExec.mock.calls[0][0] as string[];
+      expect(args).toContain("-d");
+      expect(args).toContain("Short desc");
+    });
+
+    // ── --public flag in gh argv ─────────────────────────────────────────────
+
+    it("passes --public to gh argv for public gists", async () => {
+      // Mutation target: if `ghArgs.push("--public")` is removed, gh creates a
+      // secret gist instead and this test fails.
+      await gistCommand(["create", "a.py", "--public"]);
+      const args = mockedGhExec.mock.calls[0][0] as string[];
+      expect(args).toContain("--public");
+    });
+
+    it("does NOT pass --public or --secret to gh argv for secret gists (gh defaults to secret)", async () => {
+      await gistCommand(["create", "a.py", "--secret"]);
+      const args = mockedGhExec.mock.calls[0][0] as string[];
+      expect(args).not.toContain("--public");
+      expect(args).not.toContain("--secret");
+    });
+
+    // ── Output content ──────────────────────────────────────────────────────
+
+    it("reports the gist id extracted from the URL last path segment", async () => {
+      const result = await gistCommand(["create", "a.py", "--public"]);
+      // id is the last path segment of the URL
+      expect(result).toContain(CREATE_ID);
+    });
+
+    it("reports the full gist url", async () => {
+      const result = await gistCommand(["create", "a.py", "--public"]);
+      expect(result).toContain(CREATE_URL);
+    });
+
+    it("reports visibility: secret for secret gists", async () => {
+      const result = await gistCommand(["create", "a.py", "--secret"]);
+      expect(result).toContain("secret");
+    });
+
+    it("includes the unlisted-not-private help line for secret gists", async () => {
+      const result = await gistCommand(["create", "a.py", "--secret"]);
+      expect(result).toContain("unlisted");
+      expect(result).toContain("not private");
+    });
+
+    it("omits the unlisted-not-private help line for public gists", async () => {
+      const result = await gistCommand(["create", "a.py", "--public"]);
+      expect(result).not.toContain("unlisted");
+    });
+
+    // ── User-scoped (no ctx forwarded to gh) ─────────────────────────────────
+
+    it("never passes ctx to ghExec — gist create is user-scoped", async () => {
+      // ghExec is called without a ctx argument. The second argument (ctx) must
+      // be undefined, matching the same structural guarantee as gist list.
+      await gistCommand(["create", "a.py", "--public"]);
+      expect(mockedGhExec.mock.calls[0][2]).toBeUndefined();
+    });
+
+    // ── Help / suggestions ──────────────────────────────────────────────────
+
+    it("ends with a help block", async () => {
+      const result = await gistCommand(["create", "a.py", "--public"]);
+      expect(result).toContain("help[");
     });
   });
 });
