@@ -70,22 +70,24 @@ describe("--body-file discoverability", () => {
 });
 
 describe("GIST_HELP subcommands", () => {
-  // Pin the subcommand count and names so a rebase that adds/removes gist
+  // Pin the subcommand count and names so a change that adds/removes gist
   // subcommands turns this into a visible test failure rather than a silent
-  // doc discrepancy. Post-rebase this branch sits on top of the create and
-  // delete/clone slices, so the family ships five subcommands.
-  it("declares exactly 5 subcommands", () => {
-    expect(GIST_HELP).toContain("subcommands[5]:");
+  // doc discrepancy. With edit + rename merged the gist family is complete at
+  // seven subcommands.
+  it("declares exactly 7 subcommands", () => {
+    expect(GIST_HELP).toContain("subcommands[7]:");
   });
 
-  it("names list, view, create, delete, and clone as the five subcommands", () => {
-    // The names appear on the indented line after "subcommands[5]:".
+  it("names all seven subcommands: list, view, edit, rename, create, delete, clone", () => {
+    // The names appear on the indented line after "subcommands[7]:".
     const lines = GIST_HELP.split("\n");
-    const headerIdx = lines.findIndex((l) => l.includes("subcommands[5]:"));
+    const headerIdx = lines.findIndex((l) => l.includes("subcommands[7]:"));
     expect(headerIdx).toBeGreaterThan(-1);
     const namesCombined = lines.slice(headerIdx, headerIdx + 2).join(" ");
     expect(namesCombined).toContain("list");
     expect(namesCombined).toContain("view");
+    expect(namesCombined).toContain("edit");
+    expect(namesCombined).toContain("rename");
     expect(namesCombined).toContain("create");
     expect(namesCombined).toContain("delete");
     expect(namesCombined).toContain("clone");

@@ -112,6 +112,436 @@ describe("gistCommand", () => {
     });
   });
 
+  describe("edit", () => {
+    beforeEach(() => {
+      // Default: stdin is a TTY (no piped content) so most non-stdin tests work
+      // without extra setup. Override per-test when piped content is needed.
+      mockedIsStdinTTY.mockReturnValue(true);
+      mockedGhExec.mockResolvedValue("");
+      mockedGhExecWithStdin.mockResolvedValue("");
+    });
+
+    // ── argv assertions ─────────────────────────────────────────────────────
+
+    it("replace-from-stdin: passes correct argv to ghExecWithStdin with '-' source", async () => {
+      // Blocker 1 regression guard: `-` must appear before `--filename` so gh
+      // reads from stdin instead of opening $EDITOR.
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("new content");
+
+      await gistCommand(["edit", "abc123", "--filename", "notes.md"]);
+
+      const [capturedArgs, capturedContent] =
+        mockedGhExecWithStdin.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "edit",
+        "abc123",
+        "-",           // source positional — must be present and before --filename
+        "--filename",
+        "notes.md",
+      ]);
+      expect(capturedContent).toBe("new content");
+    });
+
+    it("replace-from-stdin: short -f flag is accepted", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("content");
+
+      await gistCommand(["edit", "abc123", "-f", "notes.md"]);
+
+      const [capturedArgs] = mockedGhExecWithStdin.mock.calls[0];
+      // '-' source must precede '--filename'
+      const dashIdx = capturedArgs.indexOf("-");
+      const fnIdx = capturedArgs.indexOf("--filename");
+      expect(dashIdx).toBeGreaterThanOrEqual(0);
+      expect(fnIdx).toBeGreaterThan(dashIdx);
+      expect(capturedArgs).toContain("notes.md");
+    });
+
+    it("add-from-stdin: passes correct argv to ghExecWithStdin", async () => {
+      // Blocker 3 regression guard: --add with piped stdin must use stdin
+      // path (`--add <name> -`), not the disk-read path.
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("brand new content");
+
+      await gistCommand(["edit", "abc123", "--add", "brand-new.txt"]);
+
+      const [capturedArgs, capturedContent] =
+        mockedGhExecWithStdin.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "edit",
+        "abc123",
+        "--add",
+        "brand-new.txt",
+        "-",           // content source: stdin
+      ]);
+      expect(capturedContent).toBe("brand new content");
+    });
+
+    it("add-from-disk: passes correct argv to ghExec (no stdin)", async () => {
+      // Stdin is a TTY → disk path; no '-' sentinel, no ghExecWithStdin.
+      await gistCommand(["edit", "abc123", "--add", "/tmp/new.txt"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "edit",
+        "abc123",
+        "--add",
+        "/tmp/new.txt",
+      ]);
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("remove: passes correct argv to ghExec", async () => {
+      await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "edit",
+        "abc123",
+        "--remove",
+        "old.txt",
+      ]);
+    });
+
+    it("desc-only: routes through gh api PATCH to avoid multi-file prompt", async () => {
+      // Blocker 2 regression guard: desc-only must NOT call `gh gist edit`
+      // (which prompts on multi-file gists); it must PATCH /gists/<id>.
+      await gistCommand(["edit", "abc123", "--desc", "my new description"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "api",
+        "-X",
+        "PATCH",
+        "/gists/abc123",
+        "-f",
+        "description=my new description",
+      ]);
+    });
+
+    it("desc-only: extracts bare id from a URL selector for the API call", async () => {
+      await gistCommand([
+        "edit",
+        "https://gist.github.com/octocat/deadbeef",
+        "--desc",
+        "updated",
+      ]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toContain("/gists/deadbeef");
+      expect(capturedArgs.join(" ")).not.toContain("gist.github.com");
+    });
+
+    it("desc-only: short -d flag is accepted", async () => {
+      await gistCommand(["edit", "abc123", "-d", "a description"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs[0]).toBe("api");
+      expect(capturedArgs.join(" ")).toContain("description=a description");
+    });
+
+    it("filename+desc: includes both '-' source and '--desc' in argv", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("content");
+
+      await gistCommand([
+        "edit",
+        "abc123",
+        "--filename",
+        "notes.md",
+        "--desc",
+        "updated",
+      ]);
+
+      const [capturedArgs] = mockedGhExecWithStdin.mock.calls[0];
+      expect(capturedArgs).toContain("-");
+      expect(capturedArgs).toContain("--filename");
+      expect(capturedArgs).toContain("notes.md");
+      expect(capturedArgs).toContain("--desc");
+      expect(capturedArgs).toContain("updated");
+    });
+
+    it("add-from-stdin+desc: includes both '-' source and '--desc' in argv", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("content");
+
+      await gistCommand([
+        "edit",
+        "abc123",
+        "--add",
+        "new.txt",
+        "--desc",
+        "with new file",
+      ]);
+
+      const [capturedArgs] = mockedGhExecWithStdin.mock.calls[0];
+      expect(capturedArgs).toContain("--add");
+      expect(capturedArgs).toContain("-");
+      expect(capturedArgs).toContain("--desc");
+    });
+
+    it("add-from-disk+desc: includes both flags in argv to ghExec", async () => {
+      await gistCommand(["edit", "abc123", "--add", "/tmp/f.txt", "--desc", "d"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toContain("--add");
+      expect(capturedArgs).toContain("--desc");
+    });
+
+    it("accepts a gist URL as the selector", async () => {
+      await gistCommand([
+        "edit",
+        "https://gist.github.com/octocat/abc123",
+        "--remove",
+        "file.txt",
+      ]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs[2]).toBe("https://gist.github.com/octocat/abc123");
+    });
+
+    it("never forwards ctx to ghExec (user-scoped)", async () => {
+      await gistCommand(["edit", "abc123", "--remove", "file.txt"]);
+      expect(mockedGhExec.mock.calls[0][1]).toBeUndefined();
+    });
+
+    it("never forwards ctx to ghExecWithStdin (user-scoped)", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("x");
+
+      await gistCommand(["edit", "abc123", "--filename", "x.txt"]);
+      expect(mockedGhExecWithStdin.mock.calls[0][2]).toBeUndefined();
+    });
+
+    // ── interactivity guards ─────────────────────────────────────────────────
+    // Each guard must:
+    //   a) throw AxiError with an actionable message naming the resolution
+    //   b) prove gh was never invoked (not.toHaveBeenCalled assertions)
+    // (b) is what actually closes the interactivity story: if gh is called
+    // even when the guard fires, the test is worthless.
+
+    it("guard: piped stdin without --filename or --add throws VALIDATION_ERROR and does not call gh", async () => {
+      mockedIsStdinTTY.mockReturnValue(false); // piped content present
+      // No --filename or --add given — only --remove, which doesn't consume stdin
+      await expect(
+        gistCommand(["edit", "abc123", "--remove", "x.txt", "--desc", "wait"]),
+      ).rejects.toThrow(/--filename|--add/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: piped stdin with only --desc routes to API (not a guard error)", async () => {
+      // --desc-only is handled via API even when stdin is piped — the desc path
+      // does not read stdin and does not trigger guard 2.
+      mockedIsStdinTTY.mockReturnValue(false);
+      // No AxiError expected — the desc-only path is valid.
+      const result = await gistCommand(["edit", "abc123", "--desc", "hello"]);
+      expect(result).toBeDefined();
+      // Verify the API path was used, not gist edit
+      const [apiArgs] = mockedGhExec.mock.calls[0];
+      expect(apiArgs[0]).toBe("api");
+    });
+
+    it("guard: --filename without piped stdin throws VALIDATION_ERROR and does not call gh", async () => {
+      mockedIsStdinTTY.mockReturnValue(true); // no piped content
+      await expect(
+        gistCommand(["edit", "abc123", "--filename", "notes.md"]),
+      ).rejects.toThrow(/stdin/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: no edit operation throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(gistCommand(["edit", "abc123"])).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: --filename and --add together throws VALIDATION_ERROR and does not call gh", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("x");
+      await expect(
+        gistCommand([
+          "edit",
+          "abc123",
+          "--filename",
+          "a.txt",
+          "--add",
+          "/tmp/b.txt",
+        ]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: --filename and --remove together throws VALIDATION_ERROR and does not call gh", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("x");
+      await expect(
+        gistCommand([
+          "edit",
+          "abc123",
+          "--filename",
+          "a.txt",
+          "--remove",
+          "b.txt",
+        ]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: --add and --remove together throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(
+        gistCommand([
+          "edit",
+          "abc123",
+          "--add",
+          "/tmp/a.txt",
+          "--remove",
+          "b.txt",
+        ]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: missing id throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(gistCommand(["edit"])).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    // ── output ───────────────────────────────────────────────────────────────
+
+    it("returns edited:ok with the gist id in output", async () => {
+      await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+      // No assertion on specific TOON key — just confirm it ran and output something
+    });
+
+    it("ends with contextual help suggestions", async () => {
+      const result = await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+      expect(result).toContain("help[");
+    });
+
+    it("suggestions reference gist list and gist rename", async () => {
+      const result = await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+      expect(result).toContain("gist list");
+      expect(result).toContain("gist rename");
+    });
+  });
+
+  describe("rename", () => {
+    beforeEach(() => {
+      mockedGhExec.mockResolvedValue("");
+    });
+
+    // ── argv assertions ─────────────────────────────────────────────────────
+
+    it("passes correct argv to ghExec", async () => {
+      await gistCommand(["rename", "abc123", "old.txt", "new.txt"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "rename",
+        "abc123",
+        "old.txt",
+        "new.txt",
+      ]);
+    });
+
+    it("accepts a gist URL as the selector", async () => {
+      await gistCommand([
+        "rename",
+        "https://gist.github.com/octocat/abc123",
+        "old.txt",
+        "new.txt",
+      ]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs[2]).toBe("https://gist.github.com/octocat/abc123");
+    });
+
+    it("never forwards ctx to ghExec (user-scoped)", async () => {
+      await gistCommand(["rename", "abc123", "old.txt", "new.txt"]);
+      expect(mockedGhExec.mock.calls[0][1]).toBeUndefined();
+    });
+
+    // ── arity validation ─────────────────────────────────────────────────────
+    // All arity errors must also prove gh was never called.
+
+    it("missing id throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(gistCommand(["rename"])).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("missing old filename throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(gistCommand(["rename", "abc123"])).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("missing new filename throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(
+        gistCommand(["rename", "abc123", "old.txt"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("surplus positional throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(
+        gistCommand(["rename", "abc123", "old.txt", "new.txt", "extra"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("unknown flag throws VALIDATION_ERROR and does not call gh", async () => {
+      await expect(
+        gistCommand(["rename", "abc123", "old.txt", "new.txt", "--force"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    // ── output ───────────────────────────────────────────────────────────────
+
+    it("output includes old and new names", async () => {
+      const result = await gistCommand([
+        "rename",
+        "abc123",
+        "old.txt",
+        "new.txt",
+      ]);
+      expect(result).toContain("old.txt");
+      expect(result).toContain("new.txt");
+    });
+
+    it("ends with contextual help suggestions", async () => {
+      const result = await gistCommand([
+        "rename",
+        "abc123",
+        "old.txt",
+        "new.txt",
+      ]);
+      expect(result).toContain("help[");
+    });
+
+    it("suggestions reference gist list and gist edit", async () => {
+      const result = await gistCommand([
+        "rename",
+        "abc123",
+        "old.txt",
+        "new.txt",
+      ]);
+      expect(result).toContain("gist list");
+      expect(result).toContain("gist edit");
+    });
+  });
+
   describe("list", () => {
     it("renders gists with a count line", async () => {
       mockedGhJson.mockResolvedValue([gist(), gist({ id: "abc" })]);

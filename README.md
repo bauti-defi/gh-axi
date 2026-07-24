@@ -98,6 +98,9 @@ gh-axi variable set NODE_ENV --body production        # set a variable from a fl
 gh-axi gist list                # list your gists
 gh-axi gist list --public       # list only public gists
 gh-axi gist view <id>           # view a gist's files and content
+echo 'new content' | gh-axi gist edit <id> --filename notes.md  # replace a file from stdin
+gh-axi gist edit <id> --remove old.txt  # remove a file
+gh-axi gist rename <id> old.txt new.txt  # rename a file
 gh-axi gist create notes.md --public --desc "My notes"  # create a public gist
 gh-axi gist create --file a.py --file b.py --secret    # create a secret multi-file gist
 echo "content" | gh-axi gist create --filename hello.txt --public  # create from piped content
@@ -154,7 +157,7 @@ JSON responses are normally stripped of noisy fields before TOON encoding, but a
 | `release`  | Releases — list, view, create, edit, delete                                 |
 | `repo`     | Repositories — list, view, create, edit, clone, fork                        |
 | `label`    | Labels — list, create, edit, delete                                         |
-| `gist`     | Gists — list, view, create, delete, clone                                   |
+| `gist`     | Gists — list, view, edit, rename, create, delete, clone                     |
 | `project`  | Projects (v2) - list, view, create, edit, close, copy, items, fields        |
 | `secret`   | Actions secrets — list, set, delete                                         |
 | `variable` | Actions variables — list, set, delete                                       |
