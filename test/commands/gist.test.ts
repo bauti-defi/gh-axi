@@ -308,7 +308,6 @@ describe("gistCommand", () => {
     });
   });
 
-<<<<<<< HEAD
   describe("delete", () => {
     it("deletes the gist and reports what was deleted", async () => {
       mockedGhExec.mockResolvedValue("");
