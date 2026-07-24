@@ -671,6 +671,18 @@ const table: SuggestionEntry[] = [
     ],
   },
 
+  // Gist delete
+  {
+    match: (c) => c.domain === "gist" && c.action === "delete",
+    lines: () => ["Run `gh-axi gist list` to see remaining gists"],
+  },
+
+  // Gist clone
+  {
+    match: (c) => c.domain === "gist" && c.action === "clone",
+    lines: () => ["Run `gh-axi gist list` to see your gists"],
+  },
+
   // Search
   {
     match: (c) => c.domain === "search",

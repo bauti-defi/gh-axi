@@ -97,6 +97,8 @@ echo -n "sk-..." | gh-axi secret set CSC_LINK --env production  # scope a secret
 gh-axi variable set NODE_ENV --body production        # set a variable from a flag
 gh-axi gist list                # list your gists
 gh-axi gist list --public       # list only public gists
+gh-axi gist delete <id|url>     # delete a gist (always confirmed non-interactively)
+gh-axi gist clone <id|url>      # clone a gist locally
 gh-axi setup hooks              # install optional agent session hooks
 gh-axi update --check           # check whether a newer release exists
 gh-axi update                   # upgrade a global install
@@ -143,7 +145,7 @@ JSON responses are normally stripped of noisy fields before TOON encoding, but a
 | `release`  | Releases — list, view, create, edit, delete                                 |
 | `repo`     | Repositories — list, view, create, edit, clone, fork                        |
 | `label`    | Labels — list, create, edit, delete                                         |
-| `gist`     | Gists — list                                                                |
+| `gist`     | Gists — list, delete, clone                                                 |
 | `project`  | Projects (v2) - list, view, create, edit, close, copy, items, fields        |
 | `secret`   | Actions secrets — list, set, delete                                         |
 | `variable` | Actions variables — list, set, delete                                       |
