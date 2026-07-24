@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../src/gh.js", () => ({
   ghJson: vi.fn(),
@@ -23,18 +23,44 @@ const mockedGhExecWithStdin = vi.mocked(ghExecWithStdin);
 const mockedIsStdinTTY = vi.mocked(isStdinTTY);
 const mockedReadStdin = vi.mocked(readStdin);
 
+const GIST_ID = "5b0e0062eb8e9654adad7bb1d81cc75f";
+
 function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    id: "5b0e0062eb8e9654adad7bb1d81cc75f",
+    id: GIST_ID,
     description: "a gist",
     public: false,
-    html_url:
-      "https://gist.github.com/octocat/5b0e0062eb8e9654adad7bb1d81cc75f",
+    html_url: `https://gist.github.com/octocat/${GIST_ID}`,
     comments: 0,
     created_at: "2026-07-01T00:00:00Z",
     updated_at: "2026-07-02T00:00:00Z",
     owner: { login: "octocat" },
     files: { "a.txt": { filename: "a.txt", size: 10 } },
+    ...overrides,
+  };
+}
+
+/** A gist detail fixture for view tests (includes file content). */
+function gistDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: GIST_ID,
+    description: "a detail gist",
+    public: true,
+    html_url: `https://gist.github.com/octocat/${GIST_ID}`,
+    comments: 3,
+    created_at: "2026-07-01T00:00:00Z",
+    updated_at: "2026-07-02T00:00:00Z",
+    owner: { login: "octocat" },
+    files: {
+      "ring.erl": {
+        filename: "ring.erl",
+        type: "text/plain",
+        language: "Erlang",
+        size: 42,
+        content: "-module(ring).\n-export([start/2]).",
+        truncated: false,
+      },
+    },
     ...overrides,
   };
 }
@@ -60,6 +86,10 @@ describe("gistCommand", () => {
     mockedReadStdin.mockResolvedValue("file content");
   });
 
+  afterEach(() => {
+    delete process.env["GH_HOST"];
+  });
+
   describe("router", () => {
     it("returns help when --help is passed", async () => {
       expect(await gistCommand(["--help"])).toBe(GIST_HELP);
@@ -75,6 +105,11 @@ describe("gistCommand", () => {
       expect(result).toContain("list");
       expect(result).toContain("create");
     });
+
+    it("unknown subcommand error mentions view", async () => {
+      const result = await gistCommand(["frobnicate"]);
+      expect(result).toContain("view");
+    });
   });
 
   describe("list", () => {
@@ -82,7 +117,7 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue([gist(), gist({ id: "abc" })]);
       const result = await gistCommand(["list"]);
       expect(result).toContain("count:");
-      expect(result).toContain("5b0e0062eb8e9654adad7bb1d81cc75f");
+      expect(result).toContain(GIST_ID);
     });
 
     it("uses exactly the four default fields", async () => {
@@ -103,6 +138,16 @@ describe("gistCommand", () => {
       const result = await gistCommand(["list"]);
       expect(result).toContain("secret");
       expect(result).toContain("public");
+    });
+
+    // Mutation closer #1: swapping visibility labels is not caught by the test
+    // above (it sees both strings regardless of which is which). This assertion
+    // pins the label for a single-public gist to "public", catching the swap.
+    it("labels a public-only gist as public, never secret", async () => {
+      mockedGhJson.mockResolvedValue([gist({ public: true })]);
+      const result = await gistCommand(["list"]);
+      expect(result).toContain("public");
+      expect(result).not.toContain("secret");
     });
 
     it("counts files per gist", async () => {
@@ -134,7 +179,8 @@ describe("gistCommand", () => {
     it("honours --limit below the page size", async () => {
       mockedGhJson.mockResolvedValue([gist(), gist({ id: "b" })]);
       const result = await gistCommand(["list", "--limit", "1"]);
-      expect(result).toContain("count: 1");
+      // Mutation closer #3: the truncation marker must appear when limit caps results.
+      expect(result).toContain("count: 1 (showing first 1)");
     });
 
     it("paginates when the limit exceeds one page", async () => {
@@ -198,13 +244,23 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue([gist()]);
       const result = await gistCommand(["list"]);
       expect(result).toContain("help[");
-      expect(result).toContain("gh-axi api /gists/");
+      expect(result).toContain("gh-axi gist view");
     });
 
     it("shows help suggestions when no gists exist", async () => {
       mockedGhJson.mockResolvedValue([]);
       const result = await gistCommand(["list"]);
       expect(result).toContain("help[");
+    });
+
+    // Mutation closer #2: hardcoding isEmpty=false sends the non-empty suggestion
+    // (which mentions gist view) even when the list is empty; the empty-state
+    // suggestion mentions "gh-axi api /gists`" which is different. Pin it.
+    it("shows the empty-state suggestion text when no gists exist", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      const result = await gistCommand(["list"]);
+      // The empty-state suggestion points at the raw /gists endpoint, not a specific id.
+      expect(result).toContain("gh-axi api /gists`");
     });
 
     // Regression: --limit must cap *displayed rows after filtering*, not the
@@ -625,6 +681,223 @@ describe("gistCommand", () => {
 
     it("ends with a help block", async () => {
       const result = await gistCommand(["create", "a.py", "--public"]);
+      expect(result).toContain("help[");
+    });
+  });
+
+  describe("view", () => {
+    it("requires a selector argument", async () => {
+      await expect(gistCommand(["view"])).rejects.toThrow(AxiError);
+    });
+
+    it("calls gh api /gists/<id> — pins the API endpoint construction", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await gistCommand(["view", GIST_ID]);
+      const captured = mockedGhJson.mock.calls[0][0] as string[];
+      // Assert on captured argv so the test bites if the endpoint expression changes.
+      expect(captured[0]).toBe("api");
+      expect(captured[1]).toBe(`/gists/${GIST_ID}`);
+    });
+
+    it("never passes repo context to gh — gist view is user-scoped", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await gistCommand(["view", GIST_ID]);
+      expect(mockedGhJson.mock.calls[0][1]).toBeUndefined();
+    });
+
+    it("returns gist metadata (id, description, visibility, owner)", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).toContain(GIST_ID);
+      expect(result).toContain("a detail gist");
+      expect(result).toContain("public");
+      expect(result).toContain("octocat");
+    });
+
+    it("includes file content in the output", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).toContain("ring.erl");
+      expect(result).toContain("-module(ring)");
+    });
+
+    it("includes the file size", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).toContain("42");
+    });
+
+    it("accepts a gist.github.com URL as selector", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await gistCommand([
+        "view",
+        `https://gist.github.com/octocat/${GIST_ID}`,
+      ]);
+      const captured = mockedGhJson.mock.calls[0][0] as string[];
+      expect(captured[1]).toBe(`/gists/${GIST_ID}`);
+    });
+
+    it("accepts an ownerless gist.github.com URL", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await gistCommand(["view", `https://gist.github.com/${GIST_ID}`]);
+      const captured = mockedGhJson.mock.calls[0][0] as string[];
+      expect(captured[1]).toBe(`/gists/${GIST_ID}`);
+    });
+
+    it("accepts a GHE-shaped URL when GH_HOST is set", async () => {
+      process.env["GH_HOST"] = "ghe.example.com";
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await gistCommand([
+        "view",
+        `https://ghe.example.com/gist/OWNER/${GIST_ID}`,
+      ]);
+      const captured = mockedGhJson.mock.calls[0][0] as string[];
+      expect(captured[1]).toBe(`/gists/${GIST_ID}`);
+    });
+
+    it("rejects a URL pointing at a different host than configured", async () => {
+      process.env["GH_HOST"] = "ghe.example.com";
+      await expect(
+        gistCommand(["view", `https://gist.github.com/OWNER/${GIST_ID}`]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("truncates content over the limit and adds a footer", async () => {
+      const longContent = "x".repeat(2000);
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "big.txt": {
+              filename: "big.txt",
+              size: 2000,
+              content: longContent,
+            },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).toContain("... (truncated,");
+      expect(result).toContain("2000 chars total");
+      expect(result).toContain("use --full");
+    });
+
+    it("truncated content is byte-exact up to the cut with no cleanup rewriting", async () => {
+      // Diffs and shell code both start lines with '>'. cleanBody() would
+      // collapse 3+ such lines to "[quoted text removed]" — that must NOT
+      // happen for gist content.
+      const codeWithAngles = Array.from(
+        { length: 10 },
+        (_, i) => `> line ${i}`,
+      ).join("\n");
+      const longCode = codeWithAngles.repeat(20); // well over 1500 chars
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "diff.patch": {
+              filename: "diff.patch",
+              size: longCode.length,
+              content: longCode,
+            },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID]);
+      // The first line must be intact — no "[quoted text removed]" rewriting
+      expect(result).toContain("> line 0");
+      expect(result).not.toContain("[quoted text removed]");
+    });
+
+    it("full hint is absent when content is short enough", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail()); // ring.erl is 42 chars
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).not.toContain("... (truncated,");
+    });
+
+    it("--full returns complete content without the truncation footer", async () => {
+      const longContent = "y".repeat(2000);
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "big.txt": { filename: "big.txt", size: 2000, content: longContent },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID, "--full"]);
+      expect(result).not.toContain("... (truncated,");
+      // Content must be complete — check the tail chars are present
+      expect(result).toContain(longContent.slice(-10));
+    });
+
+    it("--files lists file names only and omits content", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "ring.erl": { filename: "ring.erl", size: 42, content: "module code" },
+            "readme.md": { filename: "readme.md", size: 10, content: "# Readme" },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID, "--files"]);
+      expect(result).toContain("ring.erl");
+      expect(result).toContain("readme.md");
+      expect(result).not.toContain("module code");
+      expect(result).not.toContain("# Readme");
+    });
+
+    it("-f/--filename emits only that file", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "ring.erl": { filename: "ring.erl", size: 42, content: "module code" },
+            "readme.md": { filename: "readme.md", size: 10, content: "# Readme" },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID, "--filename", "ring.erl"]);
+      expect(result).toContain("ring.erl");
+      expect(result).toContain("module code");
+      expect(result).not.toContain("readme.md");
+      expect(result).not.toContain("# Readme");
+    });
+
+    it("-f short form works for --filename", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID, "-f", "ring.erl"]);
+      expect(result).toContain("ring.erl");
+      expect(result).toContain("-module(ring)");
+    });
+
+    it("-f with unknown filename throws VALIDATION_ERROR", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await expect(
+        gistCommand(["view", GIST_ID, "-f", "nonexistent.txt"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("-r/--raw is accepted as a no-op and changes nothing", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const withoutRaw = await gistCommand(["view", GIST_ID]);
+      vi.resetAllMocks();
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const withRaw = await gistCommand(["view", GIST_ID, "--raw"]);
+      expect(withRaw).toBe(withoutRaw);
+    });
+
+    it("-w/--web is rejected with VALIDATION_ERROR", async () => {
+      await expect(
+        gistCommand(["view", GIST_ID, "--web"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("-w short form is also rejected", async () => {
+      await expect(
+        gistCommand(["view", GIST_ID, "-w"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("emits contextual help suggestions", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID]);
       expect(result).toContain("help[");
     });
   });

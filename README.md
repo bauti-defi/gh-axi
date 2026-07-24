@@ -97,6 +97,7 @@ echo -n "sk-..." | gh-axi secret set CSC_LINK --env production  # scope a secret
 gh-axi variable set NODE_ENV --body production        # set a variable from a flag
 gh-axi gist list                # list your gists
 gh-axi gist list --public       # list only public gists
+gh-axi gist view <id>           # view a gist's files and content
 gh-axi gist create notes.md --public --desc "My notes"  # create a public gist
 gh-axi gist create --file a.py --file b.py --secret    # create a secret multi-file gist
 echo "content" | gh-axi gist create --filename hello.txt --public  # create from piped content
@@ -153,7 +154,7 @@ JSON responses are normally stripped of noisy fields before TOON encoding, but a
 | `release`  | Releases — list, view, create, edit, delete                                 |
 | `repo`     | Repositories — list, view, create, edit, clone, fork                        |
 | `label`    | Labels — list, create, edit, delete                                         |
-| `gist`     | Gists — list, create, delete, clone                                         |
+| `gist`     | Gists — list, view, create, delete, clone                                   |
 | `project`  | Projects (v2) - list, view, create, edit, close, copy, items, fields        |
 | `secret`   | Actions secrets — list, set, delete                                         |
 | `variable` | Actions variables — list, set, delete                                       |
