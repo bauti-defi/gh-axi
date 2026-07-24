@@ -580,6 +580,47 @@ describe("gistCommand", () => {
       expect(mockedGhExec.mock.calls[0][2]).toBeUndefined();
     });
 
+    // ── Unknown single-dash flag rejection ──────────────────────────────────
+    //
+    // Single-dash gh shorthands must be rejected, not forwarded as file paths.
+    // The critical case is -p (gh's --public): `gist create a.py --secret -p`
+    // builds argv ["gist","create","a.py","-p"] which gh interprets as public,
+    // creating a public gist while the wrapper reports visibility: secret —
+    // a silent wrong-answer-at-exit-0 leak. -w/--web and -f/--filename trigger
+    // gh interactivity in similar fashion.
+    //
+    // Each test asserts BOTH that an AxiError is thrown AND that ghExec was
+    // never called — the regression the reviewer caught is that gh runs at all.
+
+    it("rejects -p (gh --public shorthand) and does not call ghExec", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--secret", "-p"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("rejects -w (gh --web shorthand) and does not call ghExec", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--public", "-w"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects -f (gh --filename shorthand) and does not call ghExec", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--public", "-f"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects unknown long flags that are not known to createGist", async () => {
+      await expect(
+        gistCommand(["create", "a.py", "--public", "--unknown-flag"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
     // ── Help / suggestions ──────────────────────────────────────────────────
 
     it("ends with a help block", async () => {

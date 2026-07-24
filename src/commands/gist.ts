@@ -228,15 +228,19 @@ async function createGist(args: string[]): Promise<string> {
 
   // After consuming all known flags, args[0] === "create" (subcommand name).
   // Anything at index 1+ is either a positional file path or an unknown flag.
+  // Use startsWith("-") — not "--" — so single-dash gh shorthands (e.g. -p for
+  // --public, -w for --web, -f for --filename) are rejected rather than
+  // forwarded as file paths. -p is especially dangerous: it reaches gh as the
+  // --public flag, creating a public gist while the wrapper reports secret.
   const remaining = args.slice(1);
-  const unknownFlags = remaining.filter((a) => a.startsWith("--"));
+  const unknownFlags = remaining.filter((a) => a.startsWith("-"));
   if (unknownFlags.length > 0) {
     throw new AxiError(
       `Unknown flag(s): ${unknownFlags.join(", ")}`,
       "VALIDATION_ERROR",
     );
   }
-  const positionals = remaining.filter((a) => !a.startsWith("--"));
+  const positionals = remaining.filter((a) => !a.startsWith("-"));
 
   // Mixing the two file-on-disk input forms is a hard error.
   if (positionals.length > 0 && fileFlags.length > 0) {
