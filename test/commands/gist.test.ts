@@ -185,10 +185,15 @@ describe("gistCommand", () => {
     });
 
     // Regression: --limit must cap *displayed rows after filtering*, not the
-    // fetch size. With 3 secret + 1 public gist and --public --limit 2, the
-    // count must be 1 (the one public gist), not 0 (wrong: limit applied before
-    // filter) and not 2 (wrong: filter not applied at all).
-    it("applies --limit after the visibility filter", async () => {
+    // fetch size. With 3 secret + 1 public gist and --public --limit 2:
+    //   - count must be 1 (the one public gist), not 0 (limit before filter)
+    //   - per_page must be 100 (full page), not 2 (limit used as fetch size)
+    //   - --paginate must be present (filtering always paginates)
+    // The per_page and --paginate assertions ensure the test bites when either
+    // the old perPage=Math.min(limit,PAGE_SIZE) or paginate=limit>PAGE_SIZE
+    // bug is reintroduced — the count assertion alone passes even with the bug
+    // if the mock returns fewer items than the buggy perPage.
+    it("applies --limit after the visibility filter and fetches a full page", async () => {
       mockedGhJson.mockResolvedValue([
         gist({ id: ID_BRAVO + "0", public: false }),
         gist({ id: ID_BRAVO + "1", public: false }),
@@ -197,6 +202,9 @@ describe("gistCommand", () => {
       ]);
       const result = await gistCommand(["list", "--public", "--limit", "2"]);
       expect(result).toContain("count: 1");
+      const capturedArgs = mockedGhJson.mock.calls[0][0] as string[];
+      expect(capturedArgs.join(" ")).toContain("per_page=100");
+      expect(capturedArgs).toContain("--paginate");
     });
 
     it("rejects a non-numeric --limit", async () => {

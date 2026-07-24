@@ -86,11 +86,13 @@ async function listGists(args: string[]): Promise<string> {
   }
 
   // --limit caps the *displayed* rows after filtering, not the fetch size.
-  // When a visibility filter is active we must fetch a full page before
-  // applying the filter; otherwise --public --limit 3 on a 10-public-gist
-  // account would discard 7 matches that were never fetched.
+  // When a visibility filter is active we must fetch ALL pages regardless of
+  // limit — the API has no visibility filter, so we can only count matching
+  // gists after receiving them. Without pagination, a --secret --limit 50 on
+  // an account with 94 secret gists (and some public ones interspersed) would
+  // silently stop at the first 100 API results and under-report.
   const filtering = wantPublic || wantSecret;
-  const paginate = limit > PAGE_SIZE;
+  const paginate = limit > PAGE_SIZE || filtering;
   const perPage = filtering ? PAGE_SIZE : Math.min(limit, PAGE_SIZE);
 
   const apiArgs: string[] = ["api", `/gists?per_page=${perPage}`];
