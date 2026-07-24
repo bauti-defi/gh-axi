@@ -16,6 +16,7 @@ import { secretCommand, SECRET_HELP } from "./commands/secret.js";
 import { variableCommand, VARIABLE_HELP } from "./commands/variable.js";
 import { searchCommand, SEARCH_HELP } from "./commands/search.js";
 import { apiCommand, API_HELP } from "./commands/api.js";
+import { gistCommand, GIST_HELP } from "./commands/gist.js";
 import { setupCommand, SETUP_HELP } from "./commands/setup.js";
 import { resolveHost, type HostContext } from "./host.js";
 import { withSuggestionHost } from "./suggestions.js";
@@ -32,8 +33,8 @@ type MainOptions = {
 };
 
 export const TOP_HELP = `usage: gh-axi [command] [args] [flags]
-commands[14]:
-  (none)=dashboard, issue, pr, run, workflow, release, repo, label, project, secret, variable, search, api, setup
+commands[15]:
+  (none)=dashboard, issue, pr, run, workflow, release, repo, label, gist, project, secret, variable, search, api, setup
 flags[4]:
   -R/--repo <OWNER/NAME> (after command), --hostname <host> (after command) or GH_HOST env, both flags accept space or equals form, --help, -v/-V/--version
 examples:
@@ -55,6 +56,7 @@ const COMMAND_HELP: Record<string, string> = {
   release: RELEASE_HELP,
   repo: REPO_HELP,
   label: LABEL_HELP,
+  gist: GIST_HELP,
   project: PROJECT_HELP,
   secret: SECRET_HELP,
   variable: VARIABLE_HELP,
@@ -76,6 +78,9 @@ const COMMANDS: Record<string, WrappedCommandFn> = {
   release: withRepoContext("release", releaseCommand),
   repo: withRepoContext("repo", repoCommand),
   label: withRepoContext("label", labelCommand),
+  // gist is user-scoped; withRepoContext still handles hostname context but
+  // gistCommand itself never forwards ctx to ghJson — see AGENTS.md sharp-edge.
+  gist: withRepoContext("gist", gistCommand),
   project: withRepoContext("project", projectCommand),
   secret: withRepoContext("secret", secretCommand),
   variable: withRepoContext("variable", variableCommand),
