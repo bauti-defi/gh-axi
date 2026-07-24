@@ -97,6 +97,9 @@ echo -n "sk-..." | gh-axi secret set CSC_LINK --env production  # scope a secret
 gh-axi variable set NODE_ENV --body production        # set a variable from a flag
 gh-axi gist list                # list your gists
 gh-axi gist list --public       # list only public gists
+gh-axi gist create notes.md --public --desc "My notes"  # create a public gist
+gh-axi gist create --file a.py --file b.py --secret    # create a secret multi-file gist
+echo "content" | gh-axi gist create --filename hello.txt --public  # create from piped content
 gh-axi gist delete <id|url>     # delete a gist (always confirmed non-interactively)
 gh-axi gist clone <id|url>      # clone a gist locally
 gh-axi setup hooks              # install optional agent session hooks
@@ -131,6 +134,11 @@ Other `gh secret` scopes (`--org`, `--user`, `--app`) are rejected with a clear 
 `gh-axi project` wraps GitHub Projects (v2) and requires the `project` (or `read:project`) OAuth scope; if a call fails on a missing scope, gh-axi tells you the `gh auth refresh -s <scope>` command to run.
 `--owner` defaults to the current repo's owner, falling back to explicit `@me` for the authenticated user.
 
+`gh-axi gist create` requires `--public` or `--secret` explicitly — passing neither (or both) is an error.
+Gist visibility is fixed at creation; a secret gist is unlisted (anyone with the URL can read it), not private.
+Two file-on-disk input forms are available: positional paths (`gist create a.py b.py`) or repeatable `--file` flags (`gist create --file a.py --file b.py`); mixing the two is an error.
+To create a gist from piped content, use `--filename <name>` together with a pipe (`echo "..." | gh-axi gist create --filename foo.txt --public`).
+
 `gh-axi api` accepts `--field`, `--header`, `--paginate`, `--jq <expression>`, and `--template <format>`; any other flag, an extra positional argument, or a repeated `--jq`/`--template` is rejected with a clear error instead of being silently dropped.
 JSON responses are normally stripped of noisy fields before TOON encoding, but a response you shaped yourself with `--jq` or `--template` keeps every key and value verbatim — only over-long strings are still truncated so one field cannot flood an agent's context.
 
@@ -145,7 +153,7 @@ JSON responses are normally stripped of noisy fields before TOON encoding, but a
 | `release`  | Releases — list, view, create, edit, delete                                 |
 | `repo`     | Repositories — list, view, create, edit, clone, fork                        |
 | `label`    | Labels — list, create, edit, delete                                         |
-| `gist`     | Gists — list, delete, clone                                                 |
+| `gist`     | Gists — list, create, delete, clone                                         |
 | `project`  | Projects (v2) - list, view, create, edit, close, copy, items, fields        |
 | `secret`   | Actions secrets — list, set, delete                                         |
 | `variable` | Actions variables — list, set, delete                                       |
