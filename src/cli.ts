@@ -79,7 +79,8 @@ const COMMANDS: Record<string, WrappedCommandFn> = {
   repo: withRepoContext("repo", repoCommand),
   label: withRepoContext("label", labelCommand),
   // gist is user-scoped; withRepoContext still handles hostname context but
-  // gistCommand itself never forwards ctx to ghJson — see AGENTS.md sharp-edge.
+  // gistCommand itself never forwards ctx to ghJson — see AGENTS.md
+  // "User-scoped commands" section for the owner-scoped pattern.
   gist: withRepoContext("gist", gistCommand),
   project: withRepoContext("project", projectCommand),
   secret: withRepoContext("secret", secretCommand),

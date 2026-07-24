@@ -7,8 +7,8 @@ vi.mock("../../src/gh.js", () => ({
 }));
 
 import { ghJson } from "../../src/gh.js";
+import { AxiError } from "../../src/errors.js";
 import { gistCommand, GIST_HELP } from "../../src/commands/gist.js";
-import type { RepoContext } from "../../src/context.js";
 
 const mockedGhJson = vi.mocked(ghJson);
 
@@ -28,12 +28,10 @@ function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   };
 }
 
-const FLAG_CTX: RepoContext = {
-  nwo: "owner/name",
-  owner: "owner",
-  name: "name",
-  source: "flag",
-};
+// Use hex-style IDs with no English-word substrings so toContain(id) cannot
+// collide with toContain("public") / toContain("secret") or similar text.
+const ID_ALPHA = "aaaa0000000000000000000000000000"; // used as the public gist
+const ID_BRAVO = "bbbb1111111111111111111111111111"; // used as the secret gist
 
 describe("gistCommand", () => {
   beforeEach(() => {
@@ -77,7 +75,7 @@ describe("gistCommand", () => {
     it("reports secret gists as secret and public as public", async () => {
       mockedGhJson.mockResolvedValue([
         gist({ public: false }),
-        gist({ id: "pub", public: true }),
+        gist({ id: "cc0000000000000000000000000000cc", public: true }),
       ]);
       const result = await gistCommand(["list"]);
       expect(result).toContain("secret");
@@ -100,9 +98,13 @@ describe("gistCommand", () => {
       expect(args.join(" ")).toContain("per_page=100");
     });
 
-    it("never passes repo context to gh", async () => {
+    it("never passes repo context to gh — gist is user-scoped", async () => {
+      // gistCommand has no ctx parameter; the guard is structural (TypeScript
+      // accepts (args: string[]) as CommandFn). We verify the contract by
+      // confirming ghJson is called without a second argument regardless of
+      // whatever the withRepoContext wrapper in cli.ts might supply.
       mockedGhJson.mockResolvedValue([]);
-      await gistCommand(["list"], FLAG_CTX);
+      await gistCommand(["list"]);
       expect(mockedGhJson.mock.calls[0][1]).toBeUndefined();
     });
 
@@ -121,27 +123,28 @@ describe("gistCommand", () => {
 
     it("filters to public gists with --public", async () => {
       mockedGhJson.mockResolvedValue([
-        gist({ id: "sec", public: false }),
-        gist({ id: "pub", public: true }),
+        gist({ id: ID_BRAVO, public: false }),
+        gist({ id: ID_ALPHA, public: true }),
       ]);
       const result = await gistCommand(["list", "--public"]);
-      expect(result).toContain("pub");
-      expect(result).not.toContain("sec");
+      expect(result).toContain(ID_ALPHA);
+      expect(result).not.toContain(ID_BRAVO);
     });
 
     it("filters to secret gists with --secret", async () => {
       mockedGhJson.mockResolvedValue([
-        gist({ id: "sec", public: false }),
-        gist({ id: "pub", public: true }),
+        gist({ id: ID_BRAVO, public: false }),
+        gist({ id: ID_ALPHA, public: true }),
       ]);
       const result = await gistCommand(["list", "--secret"]);
-      expect(result).toContain("sec");
-      expect(result).not.toContain("pub");
+      expect(result).toContain(ID_BRAVO);
+      expect(result).not.toContain(ID_ALPHA);
     });
 
     it("rejects --public and --secret together", async () => {
-      const result = await gistCommand(["list", "--public", "--secret"]);
-      expect(result).toContain("VALIDATION_ERROR");
+      await expect(
+        gistCommand(["list", "--public", "--secret"]),
+      ).rejects.toThrow(AxiError);
     });
 
     it("gives a definitive empty state", async () => {
@@ -163,22 +166,58 @@ describe("gistCommand", () => {
 
     it("rejects unknown --fields values", async () => {
       mockedGhJson.mockResolvedValue([gist()]);
-      const result = await gistCommand(["list", "--fields", "nope"]);
-      expect(result).toContain("VALIDATION_ERROR");
-      expect(result).toContain("nope");
+      await expect(
+        gistCommand(["list", "--fields", "nope"]),
+      ).rejects.toThrow(AxiError);
     });
 
     it("ends with contextual help suggestions", async () => {
       mockedGhJson.mockResolvedValue([gist()]);
       const result = await gistCommand(["list"]);
       expect(result).toContain("help[");
-      expect(result).toContain("gh-axi gist view");
+      expect(result).toContain("gh-axi api /gists/");
     });
 
     it("shows help suggestions when no gists exist", async () => {
       mockedGhJson.mockResolvedValue([]);
       const result = await gistCommand(["list"]);
       expect(result).toContain("help[");
+    });
+
+    // Regression: --limit must cap *displayed rows after filtering*, not the
+    // fetch size. With 3 secret + 1 public gist and --public --limit 2, the
+    // count must be 1 (the one public gist), not 0 (wrong: limit applied before
+    // filter) and not 2 (wrong: filter not applied at all).
+    it("applies --limit after the visibility filter", async () => {
+      mockedGhJson.mockResolvedValue([
+        gist({ id: ID_BRAVO + "0", public: false }),
+        gist({ id: ID_BRAVO + "1", public: false }),
+        gist({ id: ID_BRAVO + "2", public: false }),
+        gist({ id: ID_ALPHA, public: true }),
+      ]);
+      const result = await gistCommand(["list", "--public", "--limit", "2"]);
+      expect(result).toContain("count: 1");
+    });
+
+    it("rejects a non-numeric --limit", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      await expect(
+        gistCommand(["list", "--limit", "abc"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects --limit 0", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      await expect(
+        gistCommand(["list", "--limit", "0"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects a negative --limit", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      await expect(
+        gistCommand(["list", "--limit", "-5"]),
+      ).rejects.toThrow(AxiError);
     });
   });
 });

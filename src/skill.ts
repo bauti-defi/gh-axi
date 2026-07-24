@@ -6,7 +6,7 @@ export const SKILL_DESCRIPTION =
   "Operate GitHub through the gh-axi CLI - issues, pull requests, workflow runs, workflows, " +
   "releases, repositories, labels, gists, Projects (v2), Actions secrets and variables, search, and raw API access. " +
   "Use whenever a task touches GitHub: listing or filing issues, reviewing or merging PRs, " +
-  "checking CI runs, triggering workflows, cutting releases, managing Projects boards, managing Actions secrets/variables, or listing gists.";
+  "checking CI runs, triggering workflows, cutting releases, managing Projects boards, managing Actions secrets/variables, or listing gists via `gist list`.";
 
 export const SKILL_AUTHOR = "Kun Chen (kunchenguid)";
 
@@ -71,7 +71,7 @@ For GitHub Enterprise or another custom host, the underlying \`gh\` CLI must be 
 
 ## When to use
 
-Use gh-axi whenever a task touches GitHub: listing, filing, or editing issues; viewing, creating, reviewing, or merging pull requests; inspecting workflow runs and CI failures; triggering, enabling, or disabling workflows; managing releases, repositories, or labels; managing Projects (v2) boards and their items; managing Actions secrets or variables; searching issues, PRs, repos, commits, or code; listing or creating gists; or calling the GitHub API directly.
+Use gh-axi whenever a task touches GitHub: listing, filing, or editing issues; viewing, creating, reviewing, or merging pull requests; inspecting workflow runs and CI failures; triggering, enabling, or disabling workflows; managing releases, repositories, or labels; managing Projects (v2) boards and their items; managing Actions secrets or variables; searching issues, PRs, repos, commits, or code; listing gists; or calling the GitHub API directly.
 
 ## Workflow
 

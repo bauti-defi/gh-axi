@@ -1,4 +1,3 @@
-import type { RepoContext } from "../context.js";
 import { ghJson } from "../gh.js";
 import { AxiError } from "../errors.js";
 import { getFlag, hasFlag } from "../args.js";
@@ -27,144 +26,117 @@ examples:
   gh-axi gist list --public --limit 20
   gh-axi gist list --fields url,owner,created`;
 
-// Matches the shape of items returned by GET /gists.
-interface GistRecord {
-  id: string;
-  description: string | null;
-  public: boolean;
-  html_url: string;
-  comments: number;
-  created_at: string;
-  updated_at: string;
-  owner: { login: string };
-  files: Record<string, unknown>;
-}
-
-/** Maximum items returned in a single /gists page. */
+/** Maximum items per /gists page. Also the per_page ceiling for this endpoint. */
 const PAGE_SIZE = 100;
 
 /** Always-present fields in list output (AXI P2: 3–4 fields). */
 const defaultSchema: FieldDef[] = [
   field("id"),
   field("description"),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- files is an object from parsed JSON
-  custom("files", (item: any) =>
-    Object.keys((item as GistRecord).files ?? {}).length,
+  custom("files", (item) =>
+    Object.keys((item["files"] as Record<string, unknown>) ?? {}).length,
   ),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- public is a boolean from parsed JSON
-  custom("visibility", (item: any) =>
-    (item as GistRecord).public ? "public" : "secret",
-  ),
+  custom("visibility", (item) => (item["public"] === true ? "public" : "secret")),
 ];
 
 /** Extra fields unlocked via --fields. */
 const EXTRA_FIELDS: Record<string, ExtraFieldSpec> = {
-  created: {
-    jsonKey: "created_at",
-    def: relativeTime("created_at", "created"),
-  },
-  updated: {
-    jsonKey: "updated_at",
-    def: relativeTime("updated_at", "updated"),
-  },
-  url: {
-    jsonKey: "html_url",
-    def: field("html_url", "url"),
-  },
-  comments: {
-    jsonKey: "comments",
-    def: field("comments"),
-  },
-  owner: {
-    jsonKey: "owner",
-    def: pluck("owner", "login", "owner"),
-  },
+  created: { jsonKey: "created_at", def: relativeTime("created_at", "created") },
+  updated: { jsonKey: "updated_at", def: relativeTime("updated_at", "updated") },
+  url: { jsonKey: "html_url", def: field("html_url", "url") },
+  comments: { jsonKey: "comments", def: field("comments") },
+  owner: { jsonKey: "owner", def: pluck("owner", "login", "owner") },
 };
 
-async function listGists(
-  args: string[],
-  // ctx is intentionally received but never forwarded to ghJson — gist is
-  // user-scoped and gh api has no --repo flag. See AGENTS.md sharp-edge.
-  _ctx?: RepoContext,
-): Promise<string> {
+// listGists deliberately has no ctx parameter. gist is user-scoped and
+// gh api /gists has no --repo flag; the guard is enforced structurally.
+// See AGENTS.md "GitHub Projects" section for the owner-scoped pattern.
+async function listGists(args: string[]): Promise<string> {
   const wantPublic = hasFlag(args, "--public");
   const wantSecret = hasFlag(args, "--secret");
 
+  // Fail loudly — passing both is undefined behaviour, not a degraded result.
   if (wantPublic && wantSecret) {
-    return renderError("--public and --secret are mutually exclusive", "VALIDATION_ERROR", [
-      "Pass --public to list only public gists, or --secret to list only secret gists",
-    ]);
+    throw new AxiError(
+      "--public and --secret are mutually exclusive",
+      "VALIDATION_ERROR",
+    );
   }
 
+  // Let parseFields throw AxiError on unknown fields so the process exits
+  // non-zero — matching every sibling command family (issue.ts:226, run.ts:207).
   const fieldsArg = getFlag(args, "--fields");
-  let extraDefs: FieldDef[] = [];
-  if (fieldsArg !== undefined) {
-    try {
-      const parsed = parseFields(fieldsArg, EXTRA_FIELDS);
-      extraDefs = parsed.extraDefs;
-    } catch (err) {
-      if (err instanceof AxiError) {
-        return renderError(err.message, err.code, []);
-      }
-      throw err;
+  const { extraDefs } = parseFields(fieldsArg, EXTRA_FIELDS);
+
+  // Validate --limit before use; parseInt("abc") = NaN and slice(0, NaN) = []
+  // giving a silent empty result at exit 0, which is actively wrong.
+  const limitArg = getFlag(args, "--limit");
+  let limit: number;
+  if (limitArg !== undefined) {
+    const n = parseInt(limitArg, 10);
+    if (isNaN(n) || n < 1) {
+      throw new AxiError(
+        `--limit must be a positive integer, got: ${limitArg}`,
+        "VALIDATION_ERROR",
+      );
     }
+    limit = n;
+  } else {
+    limit = PAGE_SIZE;
   }
 
-  const limitArg = getFlag(args, "--limit");
-  const limit = limitArg !== undefined ? parseInt(limitArg, 10) : PAGE_SIZE;
-
+  // --limit caps the *displayed* rows after filtering, not the fetch size.
+  // When a visibility filter is active we must fetch a full page before
+  // applying the filter; otherwise --public --limit 3 on a 10-public-gist
+  // account would discard 7 matches that were never fetched.
+  const filtering = wantPublic || wantSecret;
   const paginate = limit > PAGE_SIZE;
-  const perPage = paginate ? PAGE_SIZE : limit;
+  const perPage = filtering ? PAGE_SIZE : Math.min(limit, PAGE_SIZE);
 
   const apiArgs: string[] = ["api", `/gists?per_page=${perPage}`];
   if (paginate) {
-    // NOTE: gh api --paginate concatenates page JSON arrays (e.g. [...][...])
-    // which JSON.parse cannot handle as-is. In mocked tests this returns a
-    // flat array. A future slice should replace this with a multi-request loop.
+    // gh merges paginated array responses into a single valid JSON array
+    // (verified on gh 2.86.0 — no concatenation issue for array endpoints).
     apiArgs.push("--paginate");
   }
 
-  // Do NOT pass ctx — gist is user-scoped; threading RepoContext would cause
-  // gh.ts#buildArgs to append --repo <nwo> which gh api does not accept here.
-  const raw = await ghJson<GistRecord[]>(apiArgs);
+  // No ctx forwarded — gist is user-scoped; gh.ts#buildArgs would append
+  // --repo <nwo> for flag/env-sourced contexts and gh api has no --repo.
+  const gists = await ghJson<Record<string, unknown>[]>(apiArgs);
 
-  // flat() is idempotent on a flat array (mocks) and flattens nested pages
-  // when gh api --paginate wraps each page into a sub-array.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON shape at runtime
-  const allGists: GistRecord[] = paginate
-    ? ((raw as any[]).flat() as GistRecord[])
-    : raw;
+  // Client-side visibility filter (the /gists endpoint has no visibility param).
+  const filtered = wantPublic
+    ? gists.filter((g) => g["public"] === true)
+    : wantSecret
+      ? gists.filter((g) => g["public"] !== true)
+      : gists;
 
-  // Visibility filter is client-side — the /gists endpoint has no visibility param.
-  let gists = allGists;
-  if (wantPublic) gists = gists.filter((g) => g.public);
-  if (wantSecret) gists = gists.filter((g) => !g.public);
+  // Client-side display cap applied after filtering.
+  const displayed = filtered.slice(0, limit);
 
-  // Client-side limit (also covers post-filter shrinkage).
-  gists = gists.slice(0, limit);
-
-  const isEmpty = gists.length === 0;
+  const isEmpty = displayed.length === 0;
   const schema = [...defaultSchema, ...extraDefs];
-  const countLine = formatCountLine({ count: gists.length, limit });
+  const countLine = formatCountLine({ count: displayed.length, limit });
 
   const suggestions = getSuggestions({ domain: "gist", action: "list", isEmpty });
   return renderOutput([
     countLine,
-    renderList("gists", gists as unknown as Record<string, unknown>[], schema),
+    renderList("gists", displayed, schema),
     renderHelp(suggestions),
   ]);
 }
 
-export async function gistCommand(
-  args: string[],
-  ctx?: RepoContext,
-): Promise<string> {
+// gistCommand has no ctx parameter — gist is user-scoped and ctx must never
+// reach ghJson. TypeScript accepts (args: string[]) as CommandFn because
+// fewer parameters are always assignable to a type with more optional params.
+// See AGENTS.md "GitHub Projects" section for the owner-scoped pattern.
+export async function gistCommand(args: string[]): Promise<string> {
   const sub = args[0];
   if (sub === "--help" || sub === undefined) return GIST_HELP;
 
   switch (sub) {
     case "list":
-      return listGists(args, ctx);
+      return listGists(args);
     default:
       return renderError(`Unknown subcommand: ${sub}`, "VALIDATION_ERROR", [
         "Available subcommands: list",

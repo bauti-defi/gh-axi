@@ -659,7 +659,7 @@ const table: SuggestionEntry[] = [
   {
     match: (c) => c.domain === "gist" && c.action === "list" && !c.isEmpty,
     lines: () => [
-      "Run `gh-axi gist view <id>` to view a gist",
+      "Run `gh-axi api /gists/<id>` to view a gist's files and metadata",
       "Run `gh-axi gist list --fields url,owner,created` to add extra fields",
     ],
   },
@@ -667,7 +667,7 @@ const table: SuggestionEntry[] = [
     match: (c) =>
       c.domain === "gist" && c.action === "list" && c.isEmpty === true,
     lines: () => [
-      `Run \`gh-axi gist create --description "..." <file>\` to create a gist`,
+      "Run `gh-axi api /gists` to see gist data via the raw API",
     ],
   },
 
