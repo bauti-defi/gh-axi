@@ -8,8 +8,8 @@ import {
   relativeTime,
   pluck,
   renderList,
-  renderHelp,
   renderDetail,
+  renderHelp,
   renderOutput,
   renderError,
   type FieldDef,
@@ -18,12 +18,15 @@ import { formatCountLine } from "../format.js";
 import { getSuggestions } from "../suggestions.js";
 import { parseFields, type ExtraFieldSpec } from "../fields.js";
 import { isStdinTTY, readStdin } from "../stdin.js";
+import { gistIdFromSelector } from "../gistSelector.js";
 
 export const GIST_HELP = `usage: gh-axi gist <subcommand> [flags]
-subcommands[4]:
-  list, create, delete <id|url>, clone <id|url>
+subcommands[5]:
+  list, view <id|url>, create, delete <id|url>, clone <id|url>
 flags{list}:
   --limit <n> (default 100), --public, --secret, --fields <field,...>
+flags{view}:
+  --files (file names only), -f/--filename <name> (single file), --full (no truncation), -r/--raw (no-op), -w/--web (rejected)
 flags{create}:
   --public (required, mutually exclusive with --secret)
   --secret (required, mutually exclusive with --public)
@@ -33,6 +36,9 @@ examples:
   gh-axi gist list
   gh-axi gist list --public --limit 20
   gh-axi gist list --fields url,owner,created
+  gh-axi gist view 5b0e0062eb8e9654adad7bb1d81cc75f
+  gh-axi gist view https://gist.github.com/octocat/5b0e0062eb8e9654adad7bb1d81cc75f
+  gh-axi gist view 5b0e0062eb8e9654adad7bb1d81cc75f --files
   gh-axi gist create notes.md --public --desc "My notes"
   gh-axi gist create --file a.py --file b.py --secret
   echo "content" | gh-axi gist create --filename hello.txt --public
@@ -60,6 +66,163 @@ const EXTRA_FIELDS: Record<string, ExtraFieldSpec> = {
   comments: { jsonKey: "comments", def: field("comments") },
   owner: { jsonKey: "owner", def: pluck("owner", "login", "owner") },
 };
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+interface GistFile {
+  filename: string;
+  type?: string;
+  language?: string;
+  size: number;
+  content?: string;
+  truncated?: boolean;
+}
+
+interface GistDetail {
+  id: string;
+  description: string | null;
+  public: boolean;
+  owner: { login: string } | null;
+  files: Record<string, GistFile>;
+  comments: number;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+}
+
+// ---------------------------------------------------------------------------
+// Content truncation (gist-specific: no prose cleanups)
+// ---------------------------------------------------------------------------
+
+/** Maximum characters shown per file in the default (non-full) view. */
+const CONTENT_MAX_LEN = 1500;
+
+/**
+ * Raw head-slice truncation for gist file content.
+ *
+ * Unlike truncateBody, this helper applies NO prose cleanups. Gist content
+ * is often source code or diffs where cleanup transforms (collapsing lines
+ * starting with `>`, stripping URLs) would corrupt the content.
+ * Footer is appended only when content is actually truncated (AXI P3).
+ */
+function truncateGistContent(
+  content: string,
+  maxLen: number,
+  full: boolean,
+): string {
+  if (full || content.length <= maxLen) return content;
+  return (
+    content.slice(0, maxLen) +
+    `\n... (truncated, ${content.length} chars total - use --full)`
+  );
+}
+
+// ---------------------------------------------------------------------------
+// View schemas
+// ---------------------------------------------------------------------------
+
+const gistMetaSchema: FieldDef[] = [
+  field("id"),
+  field("description"),
+  custom("visibility", (item: GistDetail) =>
+    item.public === true ? "public" : "secret",
+  ),
+  custom("files", (item: GistDetail) =>
+    Object.keys(item.files ?? {}).length,
+  ),
+  relativeTime("created_at", "created"),
+  relativeTime("updated_at", "updated"),
+  field("comments"),
+  field("html_url", "url"),
+  pluck("owner", "login", "owner"),
+];
+
+function makeFileSchema(full: boolean): FieldDef[] {
+  return [
+    field("filename"),
+    custom("size", (item: GistFile) => `${item.size} bytes`),
+    custom("content", (item: GistFile) => {
+      const raw = typeof item.content === "string" ? item.content : "";
+      return truncateGistContent(raw, CONTENT_MAX_LEN, full);
+    }),
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// View handler
+// ---------------------------------------------------------------------------
+
+// viewGist deliberately has no ctx parameter — gist is user-scoped.
+async function viewGist(args: string[]): Promise<string> {
+  // Reject -w/--web up-front before consuming any other args (AXI P6).
+  if (hasFlag(args, "-w") || hasFlag(args, "--web")) {
+    throw new AxiError(
+      "-w/--web is not supported: opening a browser is a no-op in agent contexts",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const full = hasFlag(args, "--full");
+  const filesOnly = hasFlag(args, "--files");
+  // takeFlag mutates args; consume -f before --filename to avoid double-take.
+  const filenameShort = takeFlag(args, "-f");
+  const filenameLong = takeFlag(args, "--filename");
+  const filenameArg = filenameShort ?? filenameLong;
+  // -r/--raw is documented as a no-op: output is always raw text.
+  takeBoolFlag(args, "-r");
+  takeBoolFlag(args, "--raw");
+
+  // args[0] is "view"; args[1] is the selector.
+  const selector = args[1];
+  if (!selector || selector.startsWith("-")) {
+    throw new AxiError(
+      "gist view requires a gist id or URL",
+      "VALIDATION_ERROR",
+      ["Usage: gh-axi gist view <id|url>"],
+    );
+  }
+
+  // Validate + extract bare id (throws VALIDATION_ERROR on bad input/host).
+  const id = gistIdFromSelector(selector);
+
+  // No ctx forwarded — gist is user-scoped; gh.ts#buildArgs would append
+  // --repo for flag/env-sourced contexts and gh api has no --repo flag.
+  const data = await ghJson<GistDetail>(["api", `/gists/${id}`]);
+  const fileList = Object.values(data.files ?? {});
+
+  const suggestions = getSuggestions({ domain: "gist", action: "view", id });
+
+  if (filesOnly) {
+    return renderOutput([
+      renderList("files", fileList, [field("filename")]),
+      renderHelp(suggestions),
+    ]);
+  }
+
+  if (filenameArg !== undefined) {
+    const file = (data.files ?? {})[filenameArg];
+    if (!file) {
+      const available = Object.keys(data.files ?? {}).join(", ");
+      throw new AxiError(
+        `File "${filenameArg}" not found in gist ${id}. Available: ${available || "(none)"}`,
+        "VALIDATION_ERROR",
+      );
+    }
+    return renderOutput([
+      renderList("files", [file], makeFileSchema(full)),
+      renderHelp(suggestions),
+    ]);
+  }
+
+  // Default: metadata block + all files with (possibly truncated) content.
+  return renderOutput([
+    renderDetail("gist", data as unknown as Record<string, unknown>, gistMetaSchema),
+    renderList("files", fileList, makeFileSchema(full)),
+    renderHelp(suggestions),
+  ]);
+}
 
 // listGists deliberately has no ctx parameter. gist is user-scoped and
 // gh api /gists has no --repo flag; the guard is enforced structurally.
@@ -342,6 +505,8 @@ export async function gistCommand(args: string[]): Promise<string> {
   switch (sub) {
     case "list":
       return listGists(args);
+    case "view":
+      return viewGist(args);
     case "create":
       return createGist(args);
     case "delete":
@@ -350,7 +515,7 @@ export async function gistCommand(args: string[]): Promise<string> {
       return cloneGist(args);
     default:
       return renderError(`Unknown subcommand: ${sub}`, "VALIDATION_ERROR", [
-        "Available subcommands: list, create, delete, clone",
+        "Available subcommands: list, view, create, delete, clone",
       ]);
   }
 }
