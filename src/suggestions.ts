@@ -680,6 +680,24 @@ const table: SuggestionEntry[] = [
     ],
   },
 
+  // Gist edit
+  {
+    match: (c) => c.domain === "gist" && c.action === "edit",
+    lines: (c) => [
+      `Run \`gh-axi gist list\` to see all gists`,
+      `Run \`gh-axi gist rename ${c.id} <old> <new>\` to rename a file`,
+    ],
+  },
+
+  // Gist rename
+  {
+    match: (c) => c.domain === "gist" && c.action === "rename",
+    lines: (c) => [
+      `Run \`gh-axi gist list\` to see all gists`,
+      `Run \`gh-axi gist edit ${c.id} --filename <name>\` to edit file content`,
+    ],
+  },
+
   // Gist create
   {
     match: (c) => c.domain === "gist" && c.action === "create",

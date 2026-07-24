@@ -21,12 +21,14 @@ import { isStdinTTY, readStdin } from "../stdin.js";
 import { gistIdFromSelector } from "../gistSelector.js";
 
 export const GIST_HELP = `usage: gh-axi gist <subcommand> [flags]
-subcommands[5]:
-  list, view <id|url>, create, delete <id|url>, clone <id|url>
+subcommands[7]:
+  list, view <id|url>, edit <id|url>, rename <id|url> <old> <new>, create, delete <id|url>, clone <id|url>
 flags{list}:
   --limit <n> (default 100), --public, --secret, --fields <field,...>
 flags{view}:
   --files (file names only), -f/--filename <name> (single file), --full (no truncation), -r/--raw (no-op), -w/--web (rejected)
+flags{edit}:
+  --filename/-f <name> (required with piped content), --add/-a <path>, --remove/-r <name>, --desc/-d <text>
 flags{create}:
   --public (required, mutually exclusive with --secret)
   --secret (required, mutually exclusive with --public)
@@ -39,6 +41,9 @@ examples:
   gh-axi gist view 5b0e0062eb8e9654adad7bb1d81cc75f
   gh-axi gist view https://gist.github.com/octocat/5b0e0062eb8e9654adad7bb1d81cc75f
   gh-axi gist view 5b0e0062eb8e9654adad7bb1d81cc75f --files
+  echo 'new content' | gh-axi gist edit <id|url> --filename notes.md
+  gh-axi gist edit <id|url> --remove old-file.txt --desc "updated description"
+  gh-axi gist rename <id|url> old.txt new.txt
   gh-axi gist create notes.md --public --desc "My notes"
   gh-axi gist create --file a.py --file b.py --secret
   echo "content" | gh-axi gist create --filename hello.txt --public
@@ -494,6 +499,200 @@ async function createGist(args: string[]): Promise<string> {
   ]);
 }
 
+// extractGistId reduces a bare id or a gist URL to the id. Takes the last
+// non-empty path segment — gh's own GistIDFromURL uses split[2], which returns
+// the OWNER for GHE URLs (https://ghe.host/gist/OWNER/ID); this is correct for
+// all three URL shapes.
+function extractGistId(selector: string): string {
+  if (selector.startsWith("http://") || selector.startsWith("https://")) {
+    const segments = selector.split("/").filter((s) => s.length > 0);
+    return segments[segments.length - 1] ?? selector;
+  }
+  return selector;
+}
+
+// editGist has no ctx parameter — see gistCommand note below.
+async function editGist(args: string[]): Promise<string> {
+  // args[0] = "edit", args[1] = id/url
+  const id = args[1];
+  if (!id) {
+    throw new AxiError(
+      "Gist ID or URL is required: gh-axi gist edit <id|url> [flags]",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const remaining = args.slice(2);
+
+  const filenameFlag =
+    getFlag(remaining, "--filename") ?? getFlag(remaining, "-f");
+  const addFlag = getFlag(remaining, "--add") ?? getFlag(remaining, "-a");
+  const removeFlag = getFlag(remaining, "--remove") ?? getFlag(remaining, "-r");
+  const descFlag = getFlag(remaining, "--desc") ?? getFlag(remaining, "-d");
+
+  // Reject mutually exclusive file operations in a single call.
+  const fileOpCount = [filenameFlag, addFlag, removeFlag].filter(
+    (v): v is string => v !== undefined,
+  ).length;
+  if (fileOpCount > 1) {
+    throw new AxiError(
+      "--filename, --add, and --remove are mutually exclusive; pass only one per invocation",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const hasPipedStdin = !isStdinTTY();
+
+  // Guard 2: piped content with no file selector → gh would prompt which file
+  // to edit ("unsure what file to edit; either specify --filename or run
+  // interactively"). Two exemptions:
+  //   • --filename present: the `-` + --filename path consumes stdin ✓
+  //   • --add present: the --add + `-` path consumes stdin ✓
+  //   • desc-only (no file op at all): routes via API and never reads stdin ✓
+  const isDescOnly =
+    descFlag !== undefined &&
+    filenameFlag === undefined &&
+    addFlag === undefined &&
+    removeFlag === undefined;
+  if (
+    hasPipedStdin &&
+    filenameFlag === undefined &&
+    addFlag === undefined &&
+    !isDescOnly
+  ) {
+    throw new AxiError(
+      "piped content requires --filename <name> or --add <name> to identify the target file",
+      "VALIDATION_ERROR",
+      [
+        "Replace a file: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
+        "Add a new file: echo 'content' | gh-axi gist edit <id|url> --add <name>",
+      ],
+    );
+  }
+
+  // Guard 1: --filename given but no piped content → gh would open $EDITOR.
+  // Pre-empt before invoking gh.
+  if (filenameFlag !== undefined && !hasPipedStdin) {
+    throw new AxiError(
+      "--filename requires content to be piped via stdin",
+      "VALIDATION_ERROR",
+      [
+        "Example: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
+      ],
+    );
+  }
+
+  // Guard: nothing to edit — gh with no flags would open $EDITOR.
+  if (
+    filenameFlag === undefined &&
+    addFlag === undefined &&
+    removeFlag === undefined &&
+    descFlag === undefined
+  ) {
+    throw new AxiError(
+      "nothing to edit; pass --filename <name> with piped content, --add <path>, --remove <name>, or --desc <text>",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  // Guard 3 (What-next? prompt) is pre-empted structurally: we always run gh
+  // as a child process with stdin not connected to a TTY.
+
+  if (filenameFlag !== undefined) {
+    // Replace (or create) a file from piped stdin.
+    // The `-` positional tells gh to read content from stdin; `--filename`
+    // names the target file in the gist. Without `-`, gh ignores piped bytes
+    // and opens $EDITOR instead — verified against a live gist.
+    const ghArgs = ["gist", "edit", id, "-", "--filename", filenameFlag];
+    if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
+    const content = await readStdin();
+    await ghExecWithStdin(ghArgs, content);
+  } else if (addFlag !== undefined && hasPipedStdin) {
+    // Add a brand-new file from piped stdin.
+    // `--add <name>` names the new file; the trailing `-` is the content
+    // source (stdin), matching `gh gist edit <id> --add <name> -`.
+    const ghArgs = ["gist", "edit", id, "--add", addFlag, "-"];
+    if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
+    const content = await readStdin();
+    await ghExecWithStdin(ghArgs, content);
+  } else if (
+    descFlag !== undefined &&
+    addFlag === undefined &&
+    removeFlag === undefined
+  ) {
+    // Description-only update.
+    // `gh gist edit <id> --desc <text>` with no file selector still enters
+    // the content-edit loop: on a multi-file gist it errors "unsure what file
+    // to edit"; on a single-file gist it relies on $EDITOR being a no-op
+    // (fragile in CI). Route through the REST API instead — metadata writes
+    // have no binary-content concern so the API path is safe here.
+    const gistId = extractGistId(id);
+    await ghExec([
+      "api",
+      "-X",
+      "PATCH",
+      `/gists/${gistId}`,
+      "-f",
+      `description=${descFlag}`,
+    ]);
+  } else {
+    // Add from disk, remove (with or without --desc), or add/remove + desc.
+    // These paths provide an explicit file selector so gh never prompts.
+    const ghArgs = ["gist", "edit", id];
+    if (addFlag !== undefined) ghArgs.push("--add", addFlag);
+    if (removeFlag !== undefined) ghArgs.push("--remove", removeFlag);
+    if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
+    await ghExec(ghArgs);
+  }
+
+  const suggestions = getSuggestions({ domain: "gist", action: "edit", id });
+  return renderOutput([
+    encode({ edited: "ok", gist: id }),
+    renderHelp(suggestions),
+  ]);
+}
+
+// renameGist has no ctx parameter — see gistCommand note below.
+async function renameGist(args: string[]): Promise<string> {
+  // args[0] = "rename", args[1..] = positionals and (no) flags
+  const allAfterSub = args.slice(1);
+
+  // Reject any flags — rename has none.
+  const unknownFlags = allAfterSub.filter((a) => a.startsWith("-"));
+  if (unknownFlags.length > 0) {
+    throw new AxiError(
+      `gist rename takes no flags; unexpected: ${unknownFlags.join(", ")}`,
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const positionals = allAfterSub;
+
+  if (positionals.length < 3) {
+    throw new AxiError(
+      "usage: gh-axi gist rename <id|url> <old> <new>",
+      "VALIDATION_ERROR",
+    );
+  }
+
+  if (positionals.length > 3) {
+    throw new AxiError(
+      `too many arguments; expected: gh-axi gist rename <id|url> <old> <new>`,
+      "VALIDATION_ERROR",
+    );
+  }
+
+  const [id, oldName, newName] = positionals as [string, string, string];
+
+  await ghExec(["gist", "rename", id, oldName, newName]);
+
+  const suggestions = getSuggestions({ domain: "gist", action: "rename", id });
+  return renderOutput([
+    encode({ renamed: "ok", gist: id, from: oldName, to: newName }),
+    renderHelp(suggestions),
+  ]);
+}
+
 // gistCommand has no ctx parameter — gist is user-scoped and ctx must never
 // reach ghJson. TypeScript accepts (args: string[]) as CommandFn because
 // fewer parameters are always assignable to a type with more optional params.
@@ -507,6 +706,10 @@ export async function gistCommand(args: string[]): Promise<string> {
       return listGists(args);
     case "view":
       return viewGist(args);
+    case "edit":
+      return editGist(args);
+    case "rename":
+      return renameGist(args);
     case "create":
       return createGist(args);
     case "delete":
@@ -515,7 +718,7 @@ export async function gistCommand(args: string[]): Promise<string> {
       return cloneGist(args);
     default:
       return renderError(`Unknown subcommand: ${sub}`, "VALIDATION_ERROR", [
-        "Available subcommands: list, view, create, delete, clone",
+        "Available subcommands: list, view, edit, rename, create, delete, clone",
       ]);
   }
 }
