@@ -104,16 +104,25 @@ interface GistDetail {
 // Shared guards
 // ---------------------------------------------------------------------------
 
+/** A token's flag name, ignoring any `=value` suffix. */
+function flagName(token: string): string {
+  return token.split("=")[0];
+}
+
 /**
- * Reject every leftover token that looks like a flag but is not on the known
+ * Reject every leftover token that looks like a flag but is not on the allowed
  * list. Callers must consume their value flags first, so anything remaining is
- * either a known boolean flag or a typo that would otherwise silently degrade
+ * either an allowed bare token or a typo that would otherwise silently degrade
  * the result at exit 0 (`--ful` ignored, `--dry-run` ignored before a delete).
  * Single-dash tokens count too: gh shorthands must never reach a positional slot.
+ *
+ * Matching is exact, never normalized across `=`. Allowed tokens are read back
+ * with hasFlag/includes, which only see the bare form — so `--full=true` must
+ * be rejected here rather than accepted and then silently ignored.
  */
-function rejectUnknownFlags(tokens: string[], known: readonly string[]): void {
+function rejectUnknownFlags(tokens: string[], allowed: readonly string[]): void {
   const unknown = tokens.filter(
-    (a) => a.startsWith("-") && !known.includes(a.split("=")[0]),
+    (a) => a.startsWith("-") && !allowed.includes(a),
   );
   if (unknown.length > 0) {
     throw new AxiError(
@@ -219,7 +228,7 @@ function makeFileSchema(full: boolean): FieldDef[] {
 // viewGist deliberately has no ctx parameter — gist is user-scoped.
 async function viewGist(args: string[]): Promise<string> {
   // Reject -w/--web up-front before consuming any other args (AXI P6).
-  if (hasFlag(args, "-w") || hasFlag(args, "--web")) {
+  if (args.some((a) => flagName(a) === "-w" || flagName(a) === "--web")) {
     throw new AxiError(
       "-w/--web is not supported: opening a browser is a no-op in agent contexts",
       "VALIDATION_ERROR",
@@ -586,6 +595,23 @@ async function editGist(args: string[]): Promise<string> {
   const addFlag = takeFlag(rest, "--add") ?? takeFlag(rest, "-a");
   const removeFlag = takeFlag(rest, "--remove") ?? takeFlag(rest, "-r");
   const descFlag = takeFlag(rest, "--desc") ?? takeFlag(rest, "-d");
+
+  // Every value flag is consumed above. Anything flag-shaped that survives is a
+  // typo which the positional filter below would otherwise drop silently —
+  // `--remove old.txt --dry-run` must not quietly remove the file. The lone "-"
+  // stdin sentinel is a positional, and each alias stays allowed so a duplicate
+  // pair (`--remove x -r y`) still falls through to the surplus-positional error.
+  rejectUnknownFlags(rest, [
+    "-",
+    "--filename",
+    "-f",
+    "--add",
+    "-a",
+    "--remove",
+    "-r",
+    "--desc",
+    "-d",
+  ]);
 
   // A lone "-" is the explicit "read content from stdin" sentinel (gh's own
   // convention). It is the ONLY stdin signal — never inferred from TTY-ness,

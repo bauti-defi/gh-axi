@@ -426,6 +426,31 @@ describe("gistCommand", () => {
       expect(mockedGhExec).not.toHaveBeenCalled();
     });
 
+    // The same destructive-guard hole closed for `gist delete`: a dropped
+    // --dry-run must not let the remove proceed at exit 0.
+    it("guard: unknown flag alongside --remove throws and does not call gh", async () => {
+      await expect(
+        gistCommand(["edit", "abc123", "--remove", "old.txt", "--dry-run"]),
+      ).rejects.toThrow(/--dry-run/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("guard: a misspelled value flag is named rather than reported as a stray positional", async () => {
+      await expect(
+        gistCommand(["edit", "abc123", "--remov", "old.txt"]),
+      ).rejects.toThrow(/--remov/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("guard: the lone '-' stdin sentinel is not treated as an unknown flag", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("brand new content");
+      mockedGhExecWithStdin.mockResolvedValue("");
+      await gistCommand(["edit", "abc123", "--add", "new.txt", "-"]);
+      expect(mockedGhExecWithStdin).toHaveBeenCalled();
+    });
+
     it("guard: --add <name> - with empty stdin throws and never writes empty content", async () => {
       mockedIsStdinTTY.mockReturnValue(false);
       mockedReadStdin.mockResolvedValue("");
@@ -1498,6 +1523,55 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue(gistDetail());
       const result = await gistCommand(["view", GIST_ID, "--full", "-r"]);
       expect(result).toContain("ring.erl");
+    });
+
+    // hasFlag only matches the bare token, so a boolean in =value form would
+    // otherwise pass the guard and then be silently ignored at exit 0.
+    it("rejects --full=true rather than accepting and ignoring it", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "big.txt": {
+              filename: "big.txt",
+              size: 2000,
+              content: "z".repeat(2000),
+            },
+          },
+        }),
+      );
+      await expect(
+        gistCommand(["view", GIST_ID, "--full=true"]),
+      ).rejects.toThrow(/--full=true/);
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+
+    it("rejects --files=1 rather than accepting and ignoring it", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await expect(
+        gistCommand(["view", GIST_ID, "--files=1"]),
+      ).rejects.toThrow(/--files=1/);
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+
+    it("rejects -r=x rather than accepting and ignoring it", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await expect(
+        gistCommand(["view", GIST_ID, "-r=x"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+
+    it("rejects --web=true with the unsupported-browser error", async () => {
+      await expect(
+        gistCommand(["view", GIST_ID, "--web=true"]),
+      ).rejects.toThrow(/browser/);
+    });
+
+    it("still accepts -f/--filename in =value form", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID, "--filename=ring.erl"]);
+      expect(result).toContain("ring.erl");
+      expect(result).toContain("-module(ring)");
     });
 
     // ── GitHub API server-side truncation ───────────────────────────────────
