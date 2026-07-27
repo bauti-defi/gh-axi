@@ -31,9 +31,9 @@ describe("gistIdFromSelector", () => {
     });
 
     it("tolerates a trailing slash", () => {
-      expect(
-        gistIdFromSelector(`https://gist.github.com/OWNER/${ID}/`),
-      ).toBe(ID);
+      expect(gistIdFromSelector(`https://gist.github.com/OWNER/${ID}/`)).toBe(
+        ID,
+      );
     });
 
     // gh's own GistIDFromURL takes path segment [2], which yields "OWNER" for
@@ -67,9 +67,9 @@ describe("gistIdFromSelector", () => {
     });
 
     it("accepts gist.github.com by default", () => {
-      expect(
-        gistIdFromSelector(`https://gist.github.com/OWNER/${ID}`),
-      ).toBe(ID);
+      expect(gistIdFromSelector(`https://gist.github.com/OWNER/${ID}`)).toBe(
+        ID,
+      );
     });
 
     it("accepts github.com by default", () => {

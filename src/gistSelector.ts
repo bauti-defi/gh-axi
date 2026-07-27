@@ -20,10 +20,7 @@ export function gistIdFromSelector(selector: string): string {
   const trimmed = selector.trim();
 
   if (!trimmed) {
-    throw new AxiError(
-      "Gist selector must not be empty",
-      "VALIDATION_ERROR",
-    );
+    throw new AxiError("Gist selector must not be empty", "VALIDATION_ERROR");
   }
 
   if (/\s/.test(trimmed)) {
@@ -46,11 +43,9 @@ export function gistIdFromSelector(selector: string): string {
 // that could alter the API path it gets interpolated into.
 function validateBareId(id: string): string {
   if (!/^[A-Za-z0-9]+$/.test(id)) {
-    throw new AxiError(
-      `Invalid gist id: "${id}"`,
-      "VALIDATION_ERROR",
-      ["A gist id is alphanumeric; pass a bare id or a full gist URL"],
-    );
+    throw new AxiError(`Invalid gist id: "${id}"`, "VALIDATION_ERROR", [
+      "A gist id is alphanumeric; pass a bare id or a full gist URL",
+    ]);
   }
   return id;
 }
@@ -60,10 +55,7 @@ function extractIdFromUrl(rawUrl: string): string {
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new AxiError(
-      `Malformed gist URL: ${rawUrl}`,
-      "VALIDATION_ERROR",
-    );
+    throw new AxiError(`Malformed gist URL: ${rawUrl}`, "VALIDATION_ERROR");
   }
   const hostname = url.hostname;
 

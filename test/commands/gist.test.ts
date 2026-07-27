@@ -25,7 +25,9 @@ const mockedReadStdin = vi.mocked(readStdin);
 
 const GIST_ID = "5b0e0062eb8e9654adad7bb1d81cc75f";
 
-function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function gist(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id: GIST_ID,
     description: "a gist",
@@ -41,7 +43,9 @@ function gist(overrides: Record<string, unknown> = {}): Record<string, unknown> 
 }
 
 /** A gist detail fixture for view tests (includes file content). */
-function gistDetail(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+function gistDetail(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
   return {
     id: GIST_ID,
     description: "a detail gist",
@@ -137,7 +141,7 @@ describe("gistCommand", () => {
         "gist",
         "edit",
         "abc123",
-        "-",           // source positional — must be present and before --filename
+        "-", // source positional — must be present and before --filename
         "--filename",
         "notes.md",
       ]);
@@ -175,7 +179,7 @@ describe("gistCommand", () => {
         "abc123",
         "--add",
         "brand-new.txt",
-        "-",           // content source: stdin
+        "-", // content source: stdin
       ]);
       expect(capturedContent).toBe("brand new content");
     });
@@ -311,7 +315,14 @@ describe("gistCommand", () => {
     });
 
     it("add-from-disk+desc: includes both flags in argv to ghExec", async () => {
-      await gistCommand(["edit", "abc123", "--add", "/tmp/f.txt", "--desc", "d"]);
+      await gistCommand([
+        "edit",
+        "abc123",
+        "--add",
+        "/tmp/f.txt",
+        "--desc",
+        "d",
+      ]);
 
       const [capturedArgs] = mockedGhExec.mock.calls[0];
       expect(capturedArgs).toContain("--add");
@@ -354,9 +365,9 @@ describe("gistCommand", () => {
       mockedIsStdinTTY.mockReturnValue(false);
       // A bare stdin sentinel with no file selector: gh would prompt which file
       // to write, so we reject up-front.
-      await expect(
-        gistCommand(["edit", "abc123", "-"]),
-      ).rejects.toThrow(/--filename|--add/);
+      await expect(gistCommand(["edit", "abc123", "-"])).rejects.toThrow(
+        /--filename|--add/,
+      );
       expect(mockedGhExec).not.toHaveBeenCalled();
       expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
     });
@@ -524,12 +535,22 @@ describe("gistCommand", () => {
     });
 
     it("ends with contextual help suggestions", async () => {
-      const result = await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+      const result = await gistCommand([
+        "edit",
+        "abc123",
+        "--remove",
+        "old.txt",
+      ]);
       expect(result).toContain("help[");
     });
 
     it("suggestions reference gist list and gist rename", async () => {
-      const result = await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+      const result = await gistCommand([
+        "edit",
+        "abc123",
+        "--remove",
+        "old.txt",
+      ]);
       expect(result).toContain("gist list");
       expect(result).toContain("gist rename");
     });
@@ -764,9 +785,9 @@ describe("gistCommand", () => {
 
     it("rejects unknown --fields values", async () => {
       mockedGhJson.mockResolvedValue([gist()]);
-      await expect(
-        gistCommand(["list", "--fields", "nope"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["list", "--fields", "nope"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     it("ends with contextual help suggestions", async () => {
@@ -817,46 +838,46 @@ describe("gistCommand", () => {
 
     it("rejects a non-numeric --limit", async () => {
       mockedGhJson.mockResolvedValue([]);
-      await expect(
-        gistCommand(["list", "--limit", "abc"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["list", "--limit", "abc"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     it("rejects --limit 0", async () => {
       mockedGhJson.mockResolvedValue([]);
-      await expect(
-        gistCommand(["list", "--limit", "0"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["list", "--limit", "0"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     it("rejects a negative --limit", async () => {
       mockedGhJson.mockResolvedValue([]);
-      await expect(
-        gistCommand(["list", "--limit", "-5"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["list", "--limit", "-5"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     // A typo must fail loudly, not silently return the default 100 rows.
     it("rejects an unknown flag instead of silently ignoring it", async () => {
       mockedGhJson.mockResolvedValue([]);
-      await expect(
-        gistCommand(["list", "--limitt", "5"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["list", "--limitt", "5"])).rejects.toThrow(
+        AxiError,
+      );
       expect(mockedGhJson).not.toHaveBeenCalled();
     });
 
     it("names the unknown flag in the error", async () => {
       mockedGhJson.mockResolvedValue([]);
-      await expect(
-        gistCommand(["list", "--limitt", "5"]),
-      ).rejects.toThrow(/--limitt/);
+      await expect(gistCommand(["list", "--limitt", "5"])).rejects.toThrow(
+        /--limitt/,
+      );
     });
 
     it("rejects an unknown flag in --flag=value form", async () => {
       mockedGhJson.mockResolvedValue([]);
-      await expect(
-        gistCommand(["list", "--fieldz=url"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["list", "--fieldz=url"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     it("still accepts --fields in --flag=value form", async () => {
@@ -869,7 +890,10 @@ describe("gistCommand", () => {
   describe("delete", () => {
     it("deletes the gist and reports what was deleted", async () => {
       mockedGhExec.mockResolvedValue("");
-      const result = await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      const result = await gistCommand([
+        "delete",
+        "abc1230000000000000000000000000a",
+      ]);
       expect(result).toContain("abc1230000000000000000000000000a");
     });
 
@@ -905,7 +929,8 @@ describe("gistCommand", () => {
 
     it("accepts a gist URL as the selector", async () => {
       mockedGhExec.mockResolvedValue("");
-      const url = "https://gist.github.com/octocat/abc1230000000000000000000000000a";
+      const url =
+        "https://gist.github.com/octocat/abc1230000000000000000000000000a";
       const result = await gistCommand(["delete", url]);
       expect(result).toContain(url);
       const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
@@ -915,7 +940,10 @@ describe("gistCommand", () => {
 
     it("emits contextual help suggestions", async () => {
       mockedGhExec.mockResolvedValue("");
-      const result = await gistCommand(["delete", "abc1230000000000000000000000000a"]);
+      const result = await gistCommand([
+        "delete",
+        "abc1230000000000000000000000000a",
+      ]);
       expect(result).toContain("help[");
       expect(result).toContain("gist list");
     });
@@ -931,7 +959,11 @@ describe("gistCommand", () => {
     it("rejects an unknown flag and never reaches gh", async () => {
       mockedGhExec.mockResolvedValue("");
       await expect(
-        gistCommand(["delete", "--dry-run", "abc1230000000000000000000000000a"]),
+        gistCommand([
+          "delete",
+          "--dry-run",
+          "abc1230000000000000000000000000a",
+        ]),
       ).rejects.toThrow(AxiError);
       expect(mockedGhExec).not.toHaveBeenCalled();
     });
@@ -939,7 +971,11 @@ describe("gistCommand", () => {
     it("names the unknown flag in the error", async () => {
       mockedGhExec.mockResolvedValue("");
       await expect(
-        gistCommand(["delete", "--dry-run", "abc1230000000000000000000000000a"]),
+        gistCommand([
+          "delete",
+          "--dry-run",
+          "abc1230000000000000000000000000a",
+        ]),
       ).rejects.toThrow(/--dry-run/);
     });
 
@@ -955,7 +991,10 @@ describe("gistCommand", () => {
   describe("clone", () => {
     it("clones the gist and reports ok", async () => {
       mockedGhExec.mockResolvedValue("");
-      const result = await gistCommand(["clone", "abc1230000000000000000000000000a"]);
+      const result = await gistCommand([
+        "clone",
+        "abc1230000000000000000000000000a",
+      ]);
       expect(result).toContain("ok");
     });
 
@@ -981,7 +1020,8 @@ describe("gistCommand", () => {
 
     it("accepts a gist URL as the selector", async () => {
       mockedGhExec.mockResolvedValue("");
-      const url = "https://gist.github.com/octocat/abc1230000000000000000000000000a";
+      const url =
+        "https://gist.github.com/octocat/abc1230000000000000000000000000a";
       const result = await gistCommand(["clone", url]);
       expect(result).toContain("ok");
       const capturedArgs = mockedGhExec.mock.calls[0]![0] as string[];
@@ -990,7 +1030,10 @@ describe("gistCommand", () => {
 
     it("emits contextual help suggestions", async () => {
       mockedGhExec.mockResolvedValue("");
-      const result = await gistCommand(["clone", "abc1230000000000000000000000000a"]);
+      const result = await gistCommand([
+        "clone",
+        "abc1230000000000000000000000000a",
+      ]);
       expect(result).toContain("help[");
       expect(result).toContain("gist list");
     });
@@ -1030,9 +1073,7 @@ describe("gistCommand", () => {
     // ── Visibility validation ───────────────────────────────────────────────
 
     it("rejects when neither --public nor --secret is given", async () => {
-      await expect(
-        gistCommand(["create", "a.py"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["create", "a.py"])).rejects.toThrow(AxiError);
     });
 
     it("rejects when both --public and --secret are given", async () => {
@@ -1337,10 +1378,7 @@ describe("gistCommand", () => {
 
     it("accepts a gist.github.com URL as selector", async () => {
       mockedGhJson.mockResolvedValue(gistDetail());
-      await gistCommand([
-        "view",
-        `https://gist.github.com/octocat/${GIST_ID}`,
-      ]);
+      await gistCommand(["view", `https://gist.github.com/octocat/${GIST_ID}`]);
       const captured = mockedGhJson.mock.calls[0][0] as string[];
       expect(captured[1]).toBe(`/gists/${GIST_ID}`);
     });
@@ -1426,7 +1464,11 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue(
         gistDetail({
           files: {
-            "big.txt": { filename: "big.txt", size: 2000, content: longContent },
+            "big.txt": {
+              filename: "big.txt",
+              size: 2000,
+              content: longContent,
+            },
           },
         }),
       );
@@ -1440,8 +1482,16 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue(
         gistDetail({
           files: {
-            "ring.erl": { filename: "ring.erl", size: 42, content: "module code" },
-            "readme.md": { filename: "readme.md", size: 10, content: "# Readme" },
+            "ring.erl": {
+              filename: "ring.erl",
+              size: 42,
+              content: "module code",
+            },
+            "readme.md": {
+              filename: "readme.md",
+              size: 10,
+              content: "# Readme",
+            },
           },
         }),
       );
@@ -1456,12 +1506,25 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue(
         gistDetail({
           files: {
-            "ring.erl": { filename: "ring.erl", size: 42, content: "module code" },
-            "readme.md": { filename: "readme.md", size: 10, content: "# Readme" },
+            "ring.erl": {
+              filename: "ring.erl",
+              size: 42,
+              content: "module code",
+            },
+            "readme.md": {
+              filename: "readme.md",
+              size: 10,
+              content: "# Readme",
+            },
           },
         }),
       );
-      const result = await gistCommand(["view", GIST_ID, "--filename", "ring.erl"]);
+      const result = await gistCommand([
+        "view",
+        GIST_ID,
+        "--filename",
+        "ring.erl",
+      ]);
       expect(result).toContain("ring.erl");
       expect(result).toContain("module code");
       expect(result).not.toContain("readme.md");
@@ -1492,15 +1555,15 @@ describe("gistCommand", () => {
     });
 
     it("-w/--web is rejected with VALIDATION_ERROR", async () => {
-      await expect(
-        gistCommand(["view", GIST_ID, "--web"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["view", GIST_ID, "--web"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     it("-w short form is also rejected", async () => {
-      await expect(
-        gistCommand(["view", GIST_ID, "-w"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["view", GIST_ID, "-w"])).rejects.toThrow(
+        AxiError,
+      );
     });
 
     it("emits contextual help suggestions", async () => {
@@ -1513,9 +1576,9 @@ describe("gistCommand", () => {
 
     it("rejects an unknown flag instead of silently degrading the result", async () => {
       mockedGhJson.mockResolvedValue(gistDetail());
-      await expect(
-        gistCommand(["view", GIST_ID, "--ful"]),
-      ).rejects.toThrow(/--ful/);
+      await expect(gistCommand(["view", GIST_ID, "--ful"])).rejects.toThrow(
+        /--ful/,
+      );
       expect(mockedGhJson).not.toHaveBeenCalled();
     });
 
@@ -1547,17 +1610,17 @@ describe("gistCommand", () => {
 
     it("rejects --files=1 rather than accepting and ignoring it", async () => {
       mockedGhJson.mockResolvedValue(gistDetail());
-      await expect(
-        gistCommand(["view", GIST_ID, "--files=1"]),
-      ).rejects.toThrow(/--files=1/);
+      await expect(gistCommand(["view", GIST_ID, "--files=1"])).rejects.toThrow(
+        /--files=1/,
+      );
       expect(mockedGhJson).not.toHaveBeenCalled();
     });
 
     it("rejects -r=x rather than accepting and ignoring it", async () => {
       mockedGhJson.mockResolvedValue(gistDetail());
-      await expect(
-        gistCommand(["view", GIST_ID, "-r=x"]),
-      ).rejects.toThrow(AxiError);
+      await expect(gistCommand(["view", GIST_ID, "-r=x"])).rejects.toThrow(
+        AxiError,
+      );
       expect(mockedGhJson).not.toHaveBeenCalled();
     });
 
@@ -1569,7 +1632,11 @@ describe("gistCommand", () => {
 
     it("still accepts -f/--filename in =value form", async () => {
       mockedGhJson.mockResolvedValue(gistDetail());
-      const result = await gistCommand(["view", GIST_ID, "--filename=ring.erl"]);
+      const result = await gistCommand([
+        "view",
+        GIST_ID,
+        "--filename=ring.erl",
+      ]);
       expect(result).toContain("ring.erl");
       expect(result).toContain("-module(ring)");
     });
@@ -1585,7 +1652,8 @@ describe("gistCommand", () => {
               size: 5_000_000,
               content: "partial bytes",
               truncated: true,
-              raw_url: "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+              raw_url:
+                "https://gist.githubusercontent.com/octocat/raw/huge.txt",
             },
           },
         }),
@@ -1608,7 +1676,8 @@ describe("gistCommand", () => {
               size: 5_000_000,
               content: "partial bytes",
               truncated: true,
-              raw_url: "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+              raw_url:
+                "https://gist.githubusercontent.com/octocat/raw/huge.txt",
             },
           },
         }),
@@ -1649,7 +1718,8 @@ describe("gistCommand", () => {
               size: 5_000_000,
               content: "partial bytes",
               truncated: true,
-              raw_url: "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+              raw_url:
+                "https://gist.githubusercontent.com/octocat/raw/huge.txt",
             },
           },
         }),

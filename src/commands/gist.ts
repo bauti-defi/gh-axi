@@ -59,16 +59,26 @@ const PAGE_SIZE = 100;
 const defaultSchema: FieldDef[] = [
   field("id"),
   field("description"),
-  custom("files", (item) =>
-    Object.keys((item["files"] as Record<string, unknown>) ?? {}).length,
+  custom(
+    "files",
+    (item) =>
+      Object.keys((item["files"] as Record<string, unknown>) ?? {}).length,
   ),
-  custom("visibility", (item) => (item["public"] === true ? "public" : "secret")),
+  custom("visibility", (item) =>
+    item["public"] === true ? "public" : "secret",
+  ),
 ];
 
 /** Extra fields unlocked via --fields. */
 const EXTRA_FIELDS: Record<string, ExtraFieldSpec> = {
-  created: { jsonKey: "created_at", def: relativeTime("created_at", "created") },
-  updated: { jsonKey: "updated_at", def: relativeTime("updated_at", "updated") },
+  created: {
+    jsonKey: "created_at",
+    def: relativeTime("created_at", "created"),
+  },
+  updated: {
+    jsonKey: "updated_at",
+    def: relativeTime("updated_at", "updated"),
+  },
   url: { jsonKey: "html_url", def: field("html_url", "url") },
   comments: { jsonKey: "comments", def: field("comments") },
   owner: { jsonKey: "owner", def: pluck("owner", "login", "owner") },
@@ -120,7 +130,10 @@ function flagName(token: string): string {
  * with hasFlag/includes, which only see the bare form — so `--full=true` must
  * be rejected here rather than accepted and then silently ignored.
  */
-function rejectUnknownFlags(tokens: string[], allowed: readonly string[]): void {
+function rejectUnknownFlags(
+  tokens: string[],
+  allowed: readonly string[],
+): void {
   const unknown = tokens.filter(
     (a) => a.startsWith("-") && !allowed.includes(a),
   );
@@ -187,9 +200,7 @@ const gistMetaSchema: FieldDef[] = [
   custom("visibility", (item: GistDetail) =>
     item.public === true ? "public" : "secret",
   ),
-  custom("files", (item: GistDetail) =>
-    Object.keys(item.files ?? {}).length,
-  ),
+  custom("files", (item: GistDetail) => Object.keys(item.files ?? {}).length),
   relativeTime("created_at", "created"),
   relativeTime("updated_at", "updated"),
   field("comments"),
@@ -300,7 +311,11 @@ async function viewGist(args: string[]): Promise<string> {
 
   // Default: metadata block + all files with (possibly truncated) content.
   return renderOutput([
-    renderDetail("gist", data as unknown as Record<string, unknown>, gistMetaSchema),
+    renderDetail(
+      "gist",
+      data as unknown as Record<string, unknown>,
+      gistMetaSchema,
+    ),
     renderList("files", fileList, makeFileSchema(full)),
     renderHelp(suggestions),
   ]);
@@ -308,7 +323,7 @@ async function viewGist(args: string[]): Promise<string> {
 
 // listGists deliberately has no ctx parameter. gist is user-scoped and
 // gh api /gists has no --repo flag; the guard is enforced structurally.
-// See AGENTS.md "GitHub Projects" section for the owner-scoped pattern.
+// See AGENTS.md "User-scoped commands" section.
 async function listGists(args: string[]): Promise<string> {
   const wantPublic = takeBoolFlag(args, "--public");
   const wantSecret = takeBoolFlag(args, "--secret");
@@ -383,7 +398,11 @@ async function listGists(args: string[]): Promise<string> {
   const schema = [...defaultSchema, ...extraDefs];
   const countLine = formatCountLine({ count: displayed.length, limit });
 
-  const suggestions = getSuggestions({ domain: "gist", action: "list", isEmpty });
+  const suggestions = getSuggestions({
+    domain: "gist",
+    action: "list",
+    isEmpty,
+  });
   return renderOutput([
     countLine,
     renderList("gists", displayed, schema),
@@ -409,17 +428,11 @@ async function deleteGist(args: string[]): Promise<string> {
       "VALIDATION_ERROR",
     );
   if (extra)
-    throw new AxiError(
-      `Unexpected argument: ${extra}`,
-      "VALIDATION_ERROR",
-    );
+    throw new AxiError(`Unexpected argument: ${extra}`, "VALIDATION_ERROR");
 
   await ghExec(["gist", "delete", selector, "--yes"]);
   const suggestions = getSuggestions({ domain: "gist", action: "delete" });
-  return renderOutput([
-    encode({ deleted: selector }),
-    renderHelp(suggestions),
-  ]);
+  return renderOutput([encode({ deleted: selector }), renderHelp(suggestions)]);
 }
 
 // cloneGist has no ctx parameter — gist is user-scoped.
@@ -440,10 +453,7 @@ async function cloneGist(args: string[]): Promise<string> {
       "VALIDATION_ERROR",
     );
   if (extra)
-    throw new AxiError(
-      `Unexpected argument: ${extra}`,
-      "VALIDATION_ERROR",
-    );
+    throw new AxiError(`Unexpected argument: ${extra}`, "VALIDATION_ERROR");
 
   await ghExec(["gist", "clone", selector]);
   const suggestions = getSuggestions({ domain: "gist", action: "clone" });
@@ -539,9 +549,7 @@ async function createGist(args: string[]): Promise<string> {
       throw new AxiError(
         "--filename requires piped content on stdin; no pipe was detected",
         "VALIDATION_ERROR",
-        [
-          `echo 'content' | gh-axi gist create --filename <name> --public`,
-        ],
+        [`echo 'content' | gh-axi gist create --filename <name> --public`],
       );
     }
     const content = await readRequiredStdin(
@@ -564,7 +572,11 @@ async function createGist(args: string[]): Promise<string> {
   const url = stdout.trim().split("\n").pop()?.trim() ?? "";
   const id = url.split("/").pop() ?? "";
 
-  const navSuggestions = getSuggestions({ domain: "gist", action: "create", id });
+  const navSuggestions = getSuggestions({
+    domain: "gist",
+    action: "create",
+    id,
+  });
   const helpLines: string[] = [];
   // Secret gists are unlisted, not private. Surface this before navigation hints
   // so the agent sees the warning even if it stops reading after the first line.
@@ -680,7 +692,9 @@ async function editGist(args: string[]): Promise<string> {
       throw new AxiError(
         "--filename requires content piped via stdin",
         "VALIDATION_ERROR",
-        ["Example: echo 'content' | gh-axi gist edit <id|url> --filename <name>"],
+        [
+          "Example: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
+        ],
       );
     }
     // The `-` positional tells gh to read content from stdin; `--filename`
@@ -791,7 +805,7 @@ async function renameGist(args: string[]): Promise<string> {
 // gistCommand has no ctx parameter — gist is user-scoped and ctx must never
 // reach ghJson. TypeScript accepts (args: string[]) as CommandFn because
 // fewer parameters are always assignable to a type with more optional params.
-// See AGENTS.md "GitHub Projects" section for the owner-scoped pattern.
+// See AGENTS.md "User-scoped commands" section.
 export async function gistCommand(args: string[]): Promise<string> {
   const sub = args[0];
   if (sub === "--help" || sub === undefined) return GIST_HELP;

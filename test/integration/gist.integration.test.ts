@@ -64,7 +64,14 @@ async function createGist(
   files: Record<string, string>,
 ): Promise<string> {
   // Build the argv using repeated -f flags for gh api
-  const argv: string[] = ["api", "-X", "POST", "/gists", "-f", `description=${description}`];
+  const argv: string[] = [
+    "api",
+    "-X",
+    "POST",
+    "/gists",
+    "-f",
+    `description=${description}`,
+  ];
   for (const [name, content] of Object.entries(files)) {
     argv.push("-f", `files[${name}][content]=${content}`);
   }
@@ -138,7 +145,12 @@ describe.skipIf(!RUN)(
       const before = await fetchGist(gistId);
       const descBefore = before.description;
 
-      await gistCommand(["edit", gistId, "--desc", "updated by integration test"]);
+      await gistCommand([
+        "edit",
+        gistId,
+        "--desc",
+        "updated by integration test",
+      ]);
 
       const after = await fetchGist(gistId);
       console.log(`  description before: ${descBefore}`);
