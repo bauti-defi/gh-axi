@@ -1,20 +1,48 @@
 /**
  * Integration tests for gist edit operations.
  *
- * These tests call real `gh` against a real GitHub gist, so they require:
+ * These tests drive the real `gistCommand` router against a real GitHub gist,
+ * so they require:
  *   - `gh` installed and authenticated with the `gist` scope
  *   - Network access
  *
  * Gate: run only when GIST_INTEGRATION=1 is set in the environment.
  * Run locally: GIST_INTEGRATION=1 pnpm test test/integration/gist.integration.test.ts
  *
- * Each test asserts the real before/after gist content to catch argv bugs
- * that unit tests (with mocked gh) cannot see — exactly the class of bug
- * found in review round 2 (blocker 1: missing `-` source, blocker 2:
- * desc-only on multi-file gist, blocker 3: add-from-stdin unimplemented).
+ * Critically, these go THROUGH `gistCommand` (not hand-built ghExec argv) so
+ * they exercise gh-axi's own flag routing end-to-end against real gh. The
+ * earlier version called ghExec directly and therefore validated gh's argv
+ * contract but none of gh-axi's routing — which is exactly how the TTY-inference
+ * bug (--remove rejected, --add <path> misrouted to stdin) slipped through.
+ *
+ * Only the stdin *source* is mocked (`readStdin`/`isStdinTTY`): the content a
+ * user would pipe is supplied via the mock, while the routing and the real gh
+ * invocation stay live.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { ghExec, ghExecWithStdin, ghJson } from "../../src/gh.js";
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  vi,
+} from "vitest";
+import { writeFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ghExec, ghJson } from "../../src/gh.js";
+import { gistCommand } from "../../src/commands/gist.js";
+import { isStdinTTY, readStdin } from "../../src/stdin.js";
+
+// Mock only the stdin source. gh itself stays real.
+vi.mock("../../src/stdin.js", () => ({
+  isStdinTTY: vi.fn(() => false),
+  readStdin: vi.fn(async () => ""),
+}));
+
+const mockedReadStdin = vi.mocked(readStdin);
+const mockedIsStdinTTY = vi.mocked(isStdinTTY);
 
 const RUN = process.env["GIST_INTEGRATION"] === "1";
 
@@ -59,6 +87,15 @@ describe.skipIf(!RUN)(
   () => {
     let gistId: string;
 
+    beforeEach(() => {
+      // Reset call history so per-test call assertions are isolated, then set
+      // the default: non-TTY stdin (the agent context) and no piped content.
+      mockedIsStdinTTY.mockClear();
+      mockedReadStdin.mockClear();
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("");
+    });
+
     beforeAll(async () => {
       // Create a secret scratch gist with two files so we can test multi-file
       // operations (e.g., the desc-only blocker only reproduces on multi-file gists).
@@ -76,16 +113,12 @@ describe.skipIf(!RUN)(
       }
     });
 
-    it("replace file content from stdin (blocker 1 regression)", async () => {
-      // Verify the '-' source positional is required and present.
-      // Without '-', gh ignores piped bytes and opens $EDITOR instead.
+    it("replace file content from stdin via gistCommand (blocker 1 regression)", async () => {
       const before = await fetchGist(gistId);
       expect(before.files["notes.txt"]?.content).toBe("original content");
 
-      await ghExecWithStdin(
-        ["gist", "edit", gistId, "-", "--filename", "notes.txt"],
-        "replaced by integration test",
-      );
+      mockedReadStdin.mockResolvedValue("replaced by integration test");
+      await gistCommand(["edit", gistId, "--filename", "notes.txt"]);
 
       const after = await fetchGist(gistId);
       console.log(
@@ -99,21 +132,13 @@ describe.skipIf(!RUN)(
       );
     });
 
-    it("update description only via gh api PATCH (blocker 2 regression)", async () => {
-      // Verify the API PATCH route works on a multi-file gist without prompting.
-      // `gh gist edit <id> --desc <text>` on a 2-file gist errors "unsure what
-      // file to edit" — the API route bypasses that entirely.
+    it("update description only via gistCommand (blocker 2 regression)", async () => {
+      // desc-only on a 2-file gist must not prompt; gistCommand routes it
+      // through the REST API PATCH.
       const before = await fetchGist(gistId);
       const descBefore = before.description;
 
-      await ghExec([
-        "api",
-        "-X",
-        "PATCH",
-        `/gists/${gistId}`,
-        "-f",
-        "description=updated by integration test",
-      ]);
+      await gistCommand(["edit", gistId, "--desc", "updated by integration test"]);
 
       const after = await fetchGist(gistId);
       console.log(`  description before: ${descBefore}`);
@@ -121,15 +146,14 @@ describe.skipIf(!RUN)(
       expect(after.description).toBe("updated by integration test");
     });
 
-    it("add a new file from piped stdin (blocker 3 regression)", async () => {
-      // Verify --add <name> - reads from stdin and creates a new file.
+    it("add a new file from piped stdin via gistCommand (blocker 3 regression)", async () => {
+      // --add <name> - reads from stdin and creates a new file. The explicit
+      // `-` sentinel is what selects the stdin path.
       const before = await fetchGist(gistId);
       expect(before.files["brand-new.txt"]).toBeUndefined();
 
-      await ghExecWithStdin(
-        ["gist", "edit", gistId, "--add", "brand-new.txt", "-"],
-        "added from stdin by integration test",
-      );
+      mockedReadStdin.mockResolvedValue("added from stdin by integration test");
+      await gistCommand(["edit", gistId, "--add", "brand-new.txt", "-"]);
 
       const after = await fetchGist(gistId);
       console.log(`  brand-new.txt before: (not present)`);
@@ -141,12 +165,38 @@ describe.skipIf(!RUN)(
       );
     });
 
-    it("remove a file", async () => {
-      // Verify the remove path works.
+    it("add a file from disk via gistCommand in non-TTY context (bug #1b regression)", async () => {
+      // Without an explicit `-`, --add must read from disk even though the
+      // agent stdin is non-TTY. The old code misrouted this to the stdin branch
+      // and never read the file.
+      const diskName = `gh-axi-gist-disk-${gistId}.txt`;
+      const before = await fetchGist(gistId);
+      expect(before.files[diskName]).toBeUndefined();
+
+      const diskPath = join(tmpdir(), diskName);
+      await writeFile(diskPath, "added from disk by integration test", "utf8");
+      try {
+        await gistCommand(["edit", gistId, "--add", diskPath]);
+      } finally {
+        await rm(diskPath, { force: true });
+      }
+
+      const after = await fetchGist(gistId);
+      const added = Object.values(after.files).find(
+        (f) => f.content === "added from disk by integration test",
+      );
+      console.log(`  from-disk file present after: ${added ? "yes" : "no"}`);
+      expect(added).toBeDefined();
+      expect(mockedReadStdin).not.toHaveBeenCalled();
+    });
+
+    it("remove a file via gistCommand in non-TTY context (bug #1a regression)", async () => {
+      // The old TTY-inference rejected --remove in non-TTY (agent) contexts.
+      // Through gistCommand it must simply remove the file.
       const before = await fetchGist(gistId);
       expect(before.files["brand-new.txt"]).toBeDefined();
 
-      await ghExec(["gist", "edit", gistId, "--remove", "brand-new.txt"]);
+      await gistCommand(["edit", gistId, "--remove", "brand-new.txt"]);
 
       const after = await fetchGist(gistId);
       console.log(`  brand-new.txt before: (present)`);

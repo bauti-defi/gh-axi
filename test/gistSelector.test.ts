@@ -105,4 +105,53 @@ describe("gistIdFromSelector", () => {
       }
     });
   });
+
+  // A bare selector is interpolated into the `/gists/<id>` API path, so it must
+  // be charset-validated (finding: unvalidated-bare-id).
+  describe("bare id charset validation", () => {
+    it("rejects a bare id containing a slash", () => {
+      expect(() => gistIdFromSelector("abc/def")).toThrow(AxiError);
+    });
+
+    it("rejects a dot-segment traversal attempt", () => {
+      expect(() => gistIdFromSelector("..")).toThrow(AxiError);
+    });
+
+    it("rejects a bare id with a path-traversal payload", () => {
+      expect(() => gistIdFromSelector("../repos/owner/repo")).toThrow(AxiError);
+    });
+
+    it("throws VALIDATION_ERROR (not a raw error) for a bad bare id", () => {
+      try {
+        gistIdFromSelector("bad/id");
+        expect.unreachable("should have thrown");
+      } catch (error) {
+        expect((error as AxiError).code).toBe("VALIDATION_ERROR");
+      }
+    });
+
+    it("rejects a url whose last segment is not a valid id", () => {
+      expect(() =>
+        gistIdFromSelector("https://gist.github.com/OWNER/bad..id"),
+      ).toThrow(AxiError);
+    });
+  });
+
+  // A malformed URL must surface as a structured VALIDATION_ERROR, not a raw
+  // TypeError from new URL() (finding: unguarded-url-parse).
+  describe("malformed url handling", () => {
+    it("throws AxiError for a URL with no host", () => {
+      expect(() => gistIdFromSelector("https://")).toThrow(AxiError);
+    });
+
+    it("surfaces VALIDATION_ERROR (not a raw TypeError) for a malformed URL", () => {
+      try {
+        gistIdFromSelector("https://");
+        expect.unreachable("should have thrown");
+      } catch (error) {
+        expect(error).toBeInstanceOf(AxiError);
+        expect((error as AxiError).code).toBe("VALIDATION_ERROR");
+      }
+    });
+  });
 });

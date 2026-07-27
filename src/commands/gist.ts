@@ -28,7 +28,7 @@ flags{list}:
 flags{view}:
   --files (file names only), -f/--filename <name> (single file), --full (no truncation), -r/--raw (no-op), -w/--web (rejected)
 flags{edit}:
-  --filename/-f <name> (required with piped content), --add/-a <path>, --remove/-r <name>, --desc/-d <text>
+  --filename/-f <name> (replace from piped stdin), --add/-a <path> (from disk) or --add/-a <name> - (from piped stdin), --remove/-r <name>, --desc/-d <text>
 flags{create}:
   --public (required, mutually exclusive with --secret)
   --secret (required, mutually exclusive with --public)
@@ -42,6 +42,8 @@ examples:
   gh-axi gist view https://gist.github.com/octocat/5b0e0062eb8e9654adad7bb1d81cc75f
   gh-axi gist view 5b0e0062eb8e9654adad7bb1d81cc75f --files
   echo 'new content' | gh-axi gist edit <id|url> --filename notes.md
+  echo 'new file' | gh-axi gist edit <id|url> --add new.txt -
+  gh-axi gist edit <id|url> --add ./local.txt
   gh-axi gist edit <id|url> --remove old-file.txt --desc "updated description"
   gh-axi gist rename <id|url> old.txt new.txt
   gh-axi gist create notes.md --public --desc "My notes"
@@ -179,13 +181,22 @@ async function viewGist(args: string[]): Promise<string> {
   takeBoolFlag(args, "-r");
   takeBoolFlag(args, "--raw");
 
-  // args[0] is "view"; args[1] is the selector.
-  const selector = args[1];
-  if (!selector || selector.startsWith("-")) {
+  // The selector is the sole remaining positional (args[0] is "view"; all
+  // value flags were consumed above). Order-insensitive: `gist view --full <id>`
+  // must work as well as `gist view <id> --full`.
+  const positionals = args.slice(1).filter((a) => !a.startsWith("-"));
+  const selector = positionals[0];
+  if (!selector) {
     throw new AxiError(
       "gist view requires a gist id or URL",
       "VALIDATION_ERROR",
       ["Usage: gh-axi gist view <id|url>"],
+    );
+  }
+  if (positionals.length > 1) {
+    throw new AxiError(
+      `Unexpected argument: ${positionals[1]}`,
+      "VALIDATION_ERROR",
     );
   }
 
@@ -499,36 +510,39 @@ async function createGist(args: string[]): Promise<string> {
   ]);
 }
 
-// extractGistId reduces a bare id or a gist URL to the id. Takes the last
-// non-empty path segment — gh's own GistIDFromURL uses split[2], which returns
-// the OWNER for GHE URLs (https://ghe.host/gist/OWNER/ID); this is correct for
-// all three URL shapes.
-function extractGistId(selector: string): string {
-  if (selector.startsWith("http://") || selector.startsWith("https://")) {
-    const segments = selector.split("/").filter((s) => s.length > 0);
-    return segments[segments.length - 1] ?? selector;
-  }
-  return selector;
-}
-
 // editGist has no ctx parameter — see gistCommand note below.
 async function editGist(args: string[]): Promise<string> {
-  // args[0] = "edit", args[1] = id/url
-  const id = args[1];
+  // Consume every value flag first (takeFlag mutates), so the selector can be
+  // located order-insensitively among whatever positionals remain. args[0] is
+  // "edit". `??` short-circuits: a present long flag skips the short alias.
+  const rest = args.slice(1);
+  const filenameFlag = takeFlag(rest, "--filename") ?? takeFlag(rest, "-f");
+  const addFlag = takeFlag(rest, "--add") ?? takeFlag(rest, "-a");
+  const removeFlag = takeFlag(rest, "--remove") ?? takeFlag(rest, "-r");
+  const descFlag = takeFlag(rest, "--desc") ?? takeFlag(rest, "-d");
+
+  // A lone "-" is the explicit "read content from stdin" sentinel (gh's own
+  // convention). It is the ONLY stdin signal — never inferred from TTY-ness,
+  // because this tool always runs with a non-TTY stdin in agent contexts, so
+  // `!isStdinTTY()` would misclassify every invocation as "content piped".
+  const wantsStdin = rest.includes("-");
+
+  // The selector is the sole remaining positional (anything that is neither a
+  // flag nor the "-" sentinel). Order-insensitive, unlike the old args[1].
+  const positionals = rest.filter((a) => !a.startsWith("-"));
+  const id = positionals[0];
   if (!id) {
     throw new AxiError(
       "Gist ID or URL is required: gh-axi gist edit <id|url> [flags]",
       "VALIDATION_ERROR",
     );
   }
-
-  const remaining = args.slice(2);
-
-  const filenameFlag =
-    getFlag(remaining, "--filename") ?? getFlag(remaining, "-f");
-  const addFlag = getFlag(remaining, "--add") ?? getFlag(remaining, "-a");
-  const removeFlag = getFlag(remaining, "--remove") ?? getFlag(remaining, "-r");
-  const descFlag = getFlag(remaining, "--desc") ?? getFlag(remaining, "-d");
+  if (positionals.length > 1) {
+    throw new AxiError(
+      `Unexpected argument: ${positionals[1]}`,
+      "VALIDATION_ERROR",
+    );
+  }
 
   // Reject mutually exclusive file operations in a single call.
   const fileOpCount = [filenameFlag, addFlag, removeFlag].filter(
@@ -541,47 +555,6 @@ async function editGist(args: string[]): Promise<string> {
     );
   }
 
-  const hasPipedStdin = !isStdinTTY();
-
-  // Guard 2: piped content with no file selector → gh would prompt which file
-  // to edit ("unsure what file to edit; either specify --filename or run
-  // interactively"). Two exemptions:
-  //   • --filename present: the `-` + --filename path consumes stdin ✓
-  //   • --add present: the --add + `-` path consumes stdin ✓
-  //   • desc-only (no file op at all): routes via API and never reads stdin ✓
-  const isDescOnly =
-    descFlag !== undefined &&
-    filenameFlag === undefined &&
-    addFlag === undefined &&
-    removeFlag === undefined;
-  if (
-    hasPipedStdin &&
-    filenameFlag === undefined &&
-    addFlag === undefined &&
-    !isDescOnly
-  ) {
-    throw new AxiError(
-      "piped content requires --filename <name> or --add <name> to identify the target file",
-      "VALIDATION_ERROR",
-      [
-        "Replace a file: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
-        "Add a new file: echo 'content' | gh-axi gist edit <id|url> --add <name>",
-      ],
-    );
-  }
-
-  // Guard 1: --filename given but no piped content → gh would open $EDITOR.
-  // Pre-empt before invoking gh.
-  if (filenameFlag !== undefined && !hasPipedStdin) {
-    throw new AxiError(
-      "--filename requires content to be piped via stdin",
-      "VALIDATION_ERROR",
-      [
-        "Example: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
-      ],
-    );
-  }
-
   // Guard: nothing to edit — gh with no flags would open $EDITOR.
   if (
     filenameFlag === undefined &&
@@ -590,16 +563,34 @@ async function editGist(args: string[]): Promise<string> {
     descFlag === undefined
   ) {
     throw new AxiError(
-      "nothing to edit; pass --filename <name> with piped content, --add <path>, --remove <name>, or --desc <text>",
+      "nothing to edit; pass --filename <name> with piped content, --add <path|name>, --remove <name>, or --desc <text>",
       "VALIDATION_ERROR",
     );
   }
 
-  // Guard 3 (What-next? prompt) is pre-empted structurally: we always run gh
-  // as a child process with stdin not connected to a TTY.
+  // Guard: the stdin sentinel needs a file selector, else gh prompts which
+  // file to write ("unsure what file to edit").
+  if (wantsStdin && filenameFlag === undefined && addFlag === undefined) {
+    throw new AxiError(
+      "stdin content (-) requires --filename <name> or --add <name> to identify the target file",
+      "VALIDATION_ERROR",
+      [
+        "Replace a file: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
+        "Add a new file: echo 'content' | gh-axi gist edit <id|url> --add <name> -",
+      ],
+    );
+  }
 
   if (filenameFlag !== undefined) {
-    // Replace (or create) a file from piped stdin.
+    // Replace (or create) a file from piped stdin. --filename's content always
+    // comes from stdin, so fail fast on a TTY (we must never block reading it).
+    if (isStdinTTY()) {
+      throw new AxiError(
+        "--filename requires content piped via stdin",
+        "VALIDATION_ERROR",
+        ["Example: echo 'content' | gh-axi gist edit <id|url> --filename <name>"],
+      );
+    }
     // The `-` positional tells gh to read content from stdin; `--filename`
     // names the target file in the gist. Without `-`, gh ignores piped bytes
     // and opens $EDITOR instead — verified against a live gist.
@@ -607,10 +598,17 @@ async function editGist(args: string[]): Promise<string> {
     if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
     const content = await readStdin();
     await ghExecWithStdin(ghArgs, content);
-  } else if (addFlag !== undefined && hasPipedStdin) {
-    // Add a brand-new file from piped stdin.
+  } else if (addFlag !== undefined && wantsStdin) {
+    // Add a brand-new file from piped stdin, signalled by the explicit `-`.
     // `--add <name>` names the new file; the trailing `-` is the content
     // source (stdin), matching `gh gist edit <id> --add <name> -`.
+    if (isStdinTTY()) {
+      throw new AxiError(
+        "--add with the stdin sentinel (-) requires content piped via stdin",
+        "VALIDATION_ERROR",
+        ["Example: echo 'content' | gh-axi gist edit <id|url> --add <name> -"],
+      );
+    }
     const ghArgs = ["gist", "edit", id, "--add", addFlag, "-"];
     if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
     const content = await readStdin();
@@ -626,7 +624,7 @@ async function editGist(args: string[]): Promise<string> {
     // to edit"; on a single-file gist it relies on $EDITOR being a no-op
     // (fragile in CI). Route through the REST API instead — metadata writes
     // have no binary-content concern so the API path is safe here.
-    const gistId = extractGistId(id);
+    const gistId = gistIdFromSelector(id);
     await ghExec([
       "api",
       "-X",
@@ -636,8 +634,9 @@ async function editGist(args: string[]): Promise<string> {
       `description=${descFlag}`,
     ]);
   } else {
-    // Add from disk, remove (with or without --desc), or add/remove + desc.
-    // These paths provide an explicit file selector so gh never prompts.
+    // Add from disk (`--add <path>`, no `-`), remove, or those combined with
+    // --desc. Each provides an explicit file selector so gh never prompts, and
+    // none reads stdin.
     const ghArgs = ["gist", "edit", id];
     if (addFlag !== undefined) ghArgs.push("--add", addFlag);
     if (removeFlag !== undefined) ghArgs.push("--remove", removeFlag);
