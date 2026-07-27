@@ -37,12 +37,34 @@ export function gistIdFromSelector(selector: string): string {
     return extractIdFromUrl(trimmed);
   }
 
-  // Bare id — return as-is.
-  return trimmed;
+  // Bare id — validate its charset before it is interpolated into the
+  // `/gists/<id>` API path, so a malformed selector can never traverse the path.
+  return validateBareId(trimmed);
+}
+
+// A gist id is alphanumeric. Reject anything else (slashes, dot-segments, etc.)
+// that could alter the API path it gets interpolated into.
+function validateBareId(id: string): string {
+  if (!/^[A-Za-z0-9]+$/.test(id)) {
+    throw new AxiError(
+      `Invalid gist id: "${id}"`,
+      "VALIDATION_ERROR",
+      ["A gist id is alphanumeric; pass a bare id or a full gist URL"],
+    );
+  }
+  return id;
 }
 
 function extractIdFromUrl(rawUrl: string): string {
-  const url = new URL(rawUrl);
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new AxiError(
+      `Malformed gist URL: ${rawUrl}`,
+      "VALIDATION_ERROR",
+    );
+  }
   const hostname = url.hostname;
 
   // Accept <configured> or gist.<configured>.
@@ -65,5 +87,7 @@ function extractIdFromUrl(rawUrl: string): string {
     );
   }
 
-  return id;
+  // The extracted segment also lands in the `/gists/<id>` API path, so hold it
+  // to the same charset as a bare id (blocks `..`, encoded slashes, etc.).
+  return validateBareId(id);
 }

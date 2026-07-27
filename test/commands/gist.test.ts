@@ -159,13 +159,13 @@ describe("gistCommand", () => {
       expect(capturedArgs).toContain("notes.md");
     });
 
-    it("add-from-stdin: passes correct argv to ghExecWithStdin", async () => {
-      // Blocker 3 regression guard: --add with piped stdin must use stdin
-      // path (`--add <name> -`), not the disk-read path.
+    it("add-from-stdin: explicit '-' sentinel routes to ghExecWithStdin", async () => {
+      // Add-from-stdin is signalled by the explicit trailing `-`, NOT by
+      // TTY-ness — so it works in the non-TTY agent context this tool targets.
       mockedIsStdinTTY.mockReturnValue(false);
       mockedReadStdin.mockResolvedValue("brand new content");
 
-      await gistCommand(["edit", "abc123", "--add", "brand-new.txt"]);
+      await gistCommand(["edit", "abc123", "--add", "brand-new.txt", "-"]);
 
       const [capturedArgs, capturedContent] =
         mockedGhExecWithStdin.mock.calls[0];
@@ -180,8 +180,11 @@ describe("gistCommand", () => {
       expect(capturedContent).toBe("brand new content");
     });
 
-    it("add-from-disk: passes correct argv to ghExec (no stdin)", async () => {
-      // Stdin is a TTY → disk path; no '-' sentinel, no ghExecWithStdin.
+    it("add-from-disk: no '-' sentinel routes to ghExec even in non-TTY (bug #1b regression)", async () => {
+      // Agents run with a non-TTY stdin. Without an explicit `-`, --add must
+      // read from disk, NOT be misrouted to the stdin branch (the old bug).
+      mockedIsStdinTTY.mockReturnValue(false);
+
       await gistCommand(["edit", "abc123", "--add", "/tmp/new.txt"]);
 
       const [capturedArgs] = mockedGhExec.mock.calls[0];
@@ -195,8 +198,29 @@ describe("gistCommand", () => {
       expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
     });
 
-    it("remove: passes correct argv to ghExec", async () => {
+    it("remove: routes to ghExec in non-TTY agent context (bug #1a regression)", async () => {
+      // The old guard rejected --remove whenever stdin was non-TTY (always, for
+      // agents) with a bogus "piped content requires --filename/--add". Remove
+      // needs no stdin and must simply run.
+      mockedIsStdinTTY.mockReturnValue(false);
+
       await gistCommand(["edit", "abc123", "--remove", "old.txt"]);
+
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "edit",
+        "abc123",
+        "--remove",
+        "old.txt",
+      ]);
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("selector is order-insensitive: flags may precede the id", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+
+      await gistCommand(["edit", "--remove", "old.txt", "abc123"]);
 
       const [capturedArgs] = mockedGhExec.mock.calls[0];
       expect(capturedArgs).toEqual([
@@ -275,6 +299,7 @@ describe("gistCommand", () => {
         "abc123",
         "--add",
         "new.txt",
+        "-",
         "--desc",
         "with new file",
       ]);
@@ -325,13 +350,40 @@ describe("gistCommand", () => {
     // (b) is what actually closes the interactivity story: if gh is called
     // even when the guard fires, the test is worthless.
 
-    it("guard: piped stdin without --filename or --add throws VALIDATION_ERROR and does not call gh", async () => {
-      mockedIsStdinTTY.mockReturnValue(false); // piped content present
-      // No --filename or --add given — only --remove, which doesn't consume stdin
+    it("guard: lone '-' sentinel without --filename or --add throws and does not call gh", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      // A bare stdin sentinel with no file selector: gh would prompt which file
+      // to write, so we reject up-front.
       await expect(
-        gistCommand(["edit", "abc123", "--remove", "x.txt", "--desc", "wait"]),
+        gistCommand(["edit", "abc123", "-"]),
       ).rejects.toThrow(/--filename|--add/);
       expect(mockedGhExec).not.toHaveBeenCalled();
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+    });
+
+    it("remove + desc in non-TTY context succeeds via ghExec (not a guard error)", async () => {
+      // Under the old TTY-inference this combination was wrongly rejected in the
+      // agent (non-TTY) context. It writes no stdin and must simply run.
+      mockedIsStdinTTY.mockReturnValue(false);
+      const result = await gistCommand([
+        "edit",
+        "abc123",
+        "--remove",
+        "x.txt",
+        "--desc",
+        "updated",
+      ]);
+      expect(result).toBeDefined();
+      const [capturedArgs] = mockedGhExec.mock.calls[0];
+      expect(capturedArgs).toEqual([
+        "gist",
+        "edit",
+        "abc123",
+        "--remove",
+        "x.txt",
+        "--desc",
+        "updated",
+      ]);
       expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
     });
 
