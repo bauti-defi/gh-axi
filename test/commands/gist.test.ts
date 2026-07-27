@@ -414,6 +414,28 @@ describe("gistCommand", () => {
       expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
     });
 
+    // isStdinTTY() never fires in agent contexts, so an empty read is the only
+    // signal nothing was piped — writing it through would blank the file.
+    it("guard: --filename with empty stdin throws and never writes empty content", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("");
+      await expect(
+        gistCommand(["edit", "abc123", "--filename", "notes.md"]),
+      ).rejects.toThrow(/stdin/);
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("guard: --add <name> - with empty stdin throws and never writes empty content", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("");
+      await expect(
+        gistCommand(["edit", "abc123", "--add", "new.txt", "-"]),
+      ).rejects.toThrow(/stdin/);
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
     it("guard: --filename and --add together throws VALIDATION_ERROR and does not call gh", async () => {
       mockedIsStdinTTY.mockReturnValue(false);
       mockedReadStdin.mockResolvedValue("x");
@@ -788,6 +810,35 @@ describe("gistCommand", () => {
         gistCommand(["list", "--limit", "-5"]),
       ).rejects.toThrow(AxiError);
     });
+
+    // A typo must fail loudly, not silently return the default 100 rows.
+    it("rejects an unknown flag instead of silently ignoring it", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      await expect(
+        gistCommand(["list", "--limitt", "5"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+
+    it("names the unknown flag in the error", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      await expect(
+        gistCommand(["list", "--limitt", "5"]),
+      ).rejects.toThrow(/--limitt/);
+    });
+
+    it("rejects an unknown flag in --flag=value form", async () => {
+      mockedGhJson.mockResolvedValue([]);
+      await expect(
+        gistCommand(["list", "--fieldz=url"]),
+      ).rejects.toThrow(AxiError);
+    });
+
+    it("still accepts --fields in --flag=value form", async () => {
+      mockedGhJson.mockResolvedValue([gist()]);
+      const result = await gistCommand(["list", "--fields=url"]);
+      expect(result).toContain("url");
+    });
   });
 
   describe("delete", () => {
@@ -849,6 +900,31 @@ describe("gistCommand", () => {
       await gistCommand(["delete", "abc1230000000000000000000000000a"]);
       expect(mockedGhExec.mock.calls[0]![1]).toBeUndefined();
     });
+
+    // A dropped guard flag would destroy the gist at exit 0 — the delete must
+    // never run when the caller passed something the wrapper does not understand.
+    it("rejects an unknown flag and never reaches gh", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["delete", "--dry-run", "abc1230000000000000000000000000a"]),
+      ).rejects.toThrow(AxiError);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("names the unknown flag in the error", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["delete", "--dry-run", "abc1230000000000000000000000000a"]),
+      ).rejects.toThrow(/--dry-run/);
+    });
+
+    it("rejects a single-dash flag rather than treating it as the selector", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["delete", "-y", "abc1230000000000000000000000000a"]),
+      ).rejects.toThrow(/-y/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
   });
 
   describe("clone", () => {
@@ -898,6 +974,22 @@ describe("gistCommand", () => {
       mockedGhExec.mockResolvedValue("");
       await gistCommand(["clone", "abc1230000000000000000000000000a"]);
       expect(mockedGhExec.mock.calls[0]![1]).toBeUndefined();
+    });
+
+    it("rejects an unknown flag and never reaches gh", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["clone", "--depth=1", "abc1230000000000000000000000000a"]),
+      ).rejects.toThrow(/--depth/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
+    });
+
+    it("rejects a single-dash flag rather than treating it as the selector", async () => {
+      mockedGhExec.mockResolvedValue("");
+      await expect(
+        gistCommand(["clone", "-q", "abc1230000000000000000000000000a"]),
+      ).rejects.toThrow(/-q/);
+      expect(mockedGhExec).not.toHaveBeenCalled();
     });
   });
 
@@ -1026,6 +1118,15 @@ describe("gistCommand", () => {
       await expect(
         gistCommand(["create", "--filename", "foo.txt", "--public"]),
       ).rejects.toThrow(AxiError);
+    });
+
+    it("rejects an empty stdin read and never creates an empty gist", async () => {
+      mockedIsStdinTTY.mockReturnValue(false);
+      mockedReadStdin.mockResolvedValue("");
+      await expect(
+        gistCommand(["create", "--filename", "foo.txt", "--public"]),
+      ).rejects.toThrow(/stdin/);
+      expect(mockedGhExecWithStdin).not.toHaveBeenCalled();
     });
 
     it("rejects mixing --filename with positional paths", async () => {
@@ -1381,6 +1482,106 @@ describe("gistCommand", () => {
       mockedGhJson.mockResolvedValue(gistDetail());
       const result = await gistCommand(["view", GIST_ID]);
       expect(result).toContain("help[");
+    });
+
+    // ── Unknown flag rejection ──────────────────────────────────────────────
+
+    it("rejects an unknown flag instead of silently degrading the result", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      await expect(
+        gistCommand(["view", GIST_ID, "--ful"]),
+      ).rejects.toThrow(/--ful/);
+      expect(mockedGhJson).not.toHaveBeenCalled();
+    });
+
+    it("accepts every documented boolean flag", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID, "--full", "-r"]);
+      expect(result).toContain("ring.erl");
+    });
+
+    // ── GitHub API server-side truncation ───────────────────────────────────
+
+    it("surfaces a note and raw_url when the API truncated the file", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "huge.txt": {
+              filename: "huge.txt",
+              size: 5_000_000,
+              content: "partial bytes",
+              truncated: true,
+              raw_url: "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+            },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).toContain("truncated by the GitHub API");
+      expect(result).toContain(
+        "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+      );
+    });
+
+    // --full cannot undo a server-side cap; claiming "no truncation" there
+    // would be a silent lie about missing bytes.
+    it("keeps the API truncation note under --full", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "huge.txt": {
+              filename: "huge.txt",
+              size: 5_000_000,
+              content: "partial bytes",
+              truncated: true,
+              raw_url: "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+            },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID, "--full"]);
+      expect(result).toContain("truncated by the GitHub API");
+    });
+
+    it("still notes API truncation when raw_url is absent", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "huge.txt": {
+              filename: "huge.txt",
+              size: 5_000_000,
+              content: "partial bytes",
+              truncated: true,
+            },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).toContain("truncated by the GitHub API");
+    });
+
+    it("omits the API truncation note when truncated is false", async () => {
+      mockedGhJson.mockResolvedValue(gistDetail());
+      const result = await gistCommand(["view", GIST_ID]);
+      expect(result).not.toContain("truncated by the GitHub API");
+    });
+
+    it("surfaces the API truncation note in the -f single-file view", async () => {
+      mockedGhJson.mockResolvedValue(
+        gistDetail({
+          files: {
+            "huge.txt": {
+              filename: "huge.txt",
+              size: 5_000_000,
+              content: "partial bytes",
+              truncated: true,
+              raw_url: "https://gist.githubusercontent.com/octocat/raw/huge.txt",
+            },
+          },
+        }),
+      );
+      const result = await gistCommand(["view", GIST_ID, "-f", "huge.txt"]);
+      expect(result).toContain("truncated by the GitHub API");
     });
   });
 });

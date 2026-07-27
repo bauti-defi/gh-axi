@@ -1,7 +1,7 @@
 import { encode } from "@toon-format/toon";
 import { ghJson, ghExec, ghExecWithStdin } from "../gh.js";
 import { AxiError } from "../errors.js";
-import { getFlag, hasFlag, takeFlag, takeBoolFlag, takeAllFlags } from "../args.js";
+import { hasFlag, takeFlag, takeBoolFlag, takeAllFlags } from "../args.js";
 import {
   field,
   custom,
@@ -85,6 +85,7 @@ interface GistFile {
   size: number;
   content?: string;
   truncated?: boolean;
+  raw_url?: string;
 }
 
 interface GistDetail {
@@ -97,6 +98,47 @@ interface GistDetail {
   created_at: string;
   updated_at: string;
   html_url: string;
+}
+
+// ---------------------------------------------------------------------------
+// Shared guards
+// ---------------------------------------------------------------------------
+
+/**
+ * Reject every leftover token that looks like a flag but is not on the known
+ * list. Callers must consume their value flags first, so anything remaining is
+ * either a known boolean flag or a typo that would otherwise silently degrade
+ * the result at exit 0 (`--ful` ignored, `--dry-run` ignored before a delete).
+ * Single-dash tokens count too: gh shorthands must never reach a positional slot.
+ */
+function rejectUnknownFlags(tokens: string[], known: readonly string[]): void {
+  const unknown = tokens.filter(
+    (a) => a.startsWith("-") && !known.includes(a.split("=")[0]),
+  );
+  if (unknown.length > 0) {
+    throw new AxiError(
+      `Unknown flag(s): ${unknown.join(", ")}`,
+      "VALIDATION_ERROR",
+    );
+  }
+}
+
+/**
+ * Read piped stdin, rejecting a zero-length read the way resolveValue does.
+ * isStdinTTY() never fires in agent contexts, so an empty read is the only
+ * signal that nothing was actually piped — issuing the gh write anyway would
+ * replace the target file's content with nothing.
+ */
+async function readRequiredStdin(example: string): Promise<string> {
+  const content = await readStdin();
+  if (content.length === 0) {
+    throw new AxiError(
+      "no content received on stdin; nothing was piped",
+      "VALIDATION_ERROR",
+      [example],
+    );
+  }
+  return content;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,13 +188,26 @@ const gistMetaSchema: FieldDef[] = [
   pluck("owner", "login", "owner"),
 ];
 
+/**
+ * GET /gists/<id> caps each file's `content` at 1 MB and sets `truncated: true`
+ * (files over 10 MB carry no content at all). --full cannot undo that server-side
+ * cap, so the note is appended regardless of --full and points at raw_url.
+ */
+function apiTruncationNote(file: GistFile): string {
+  const source = file.raw_url
+    ? ` - fetch the full file from ${file.raw_url}`
+    : "";
+  return `\n... (truncated by the GitHub API at 1MB${source})`;
+}
+
 function makeFileSchema(full: boolean): FieldDef[] {
   return [
     field("filename"),
     custom("size", (item: GistFile) => `${item.size} bytes`),
     custom("content", (item: GistFile) => {
       const raw = typeof item.content === "string" ? item.content : "";
-      return truncateGistContent(raw, CONTENT_MAX_LEN, full);
+      const shown = truncateGistContent(raw, CONTENT_MAX_LEN, full);
+      return item.truncated === true ? shown + apiTruncationNote(item) : shown;
     }),
   ];
 }
@@ -177,9 +232,11 @@ async function viewGist(args: string[]): Promise<string> {
   const filenameShort = takeFlag(args, "-f");
   const filenameLong = takeFlag(args, "--filename");
   const filenameArg = filenameShort ?? filenameLong;
-  // -r/--raw is documented as a no-op: output is always raw text.
-  takeBoolFlag(args, "-r");
-  takeBoolFlag(args, "--raw");
+
+  // Every value flag is consumed above, so any remaining flag-shaped token must
+  // be a boolean view flag. -r/--raw is documented as a no-op (output is always
+  // raw text) and is whitelisted purely to keep that contract.
+  rejectUnknownFlags(args.slice(1), ["--files", "--full", "-r", "--raw"]);
 
   // The selector is the sole remaining positional (args[0] is "view"; all
   // value flags were consumed above). Order-insensitive: `gist view --full <id>`
@@ -244,8 +301,8 @@ async function viewGist(args: string[]): Promise<string> {
 // gh api /gists has no --repo flag; the guard is enforced structurally.
 // See AGENTS.md "GitHub Projects" section for the owner-scoped pattern.
 async function listGists(args: string[]): Promise<string> {
-  const wantPublic = hasFlag(args, "--public");
-  const wantSecret = hasFlag(args, "--secret");
+  const wantPublic = takeBoolFlag(args, "--public");
+  const wantSecret = takeBoolFlag(args, "--secret");
 
   // Fail loudly — passing both is undefined behaviour, not a degraded result.
   if (wantPublic && wantSecret) {
@@ -257,12 +314,17 @@ async function listGists(args: string[]): Promise<string> {
 
   // Let parseFields throw AxiError on unknown fields so the process exits
   // non-zero — matching every sibling command family (issue.ts:226, run.ts:207).
-  const fieldsArg = getFlag(args, "--fields");
+  const fieldsArg = takeFlag(args, "--fields");
   const { extraDefs } = parseFields(fieldsArg, EXTRA_FIELDS);
 
   // Validate --limit before use; parseInt("abc") = NaN and slice(0, NaN) = []
   // giving a silent empty result at exit 0, which is actively wrong.
-  const limitArg = getFlag(args, "--limit");
+  const limitArg = takeFlag(args, "--limit");
+
+  // Both value flags are consumed above, so nothing flag-shaped may remain:
+  // `--limitt 5` must fail loudly instead of silently returning 100 rows.
+  rejectUnknownFlags(args.slice(1), []);
+
   let limit: number;
   if (limitArg !== undefined) {
     const n = parseInt(limitArg, 10);
@@ -324,7 +386,11 @@ async function listGists(args: string[]): Promise<string> {
 // gh gist delete refuses to run non-interactively without --yes;
 // always pass it so this command never prompts.
 async function deleteGist(args: string[]): Promise<string> {
-  const positionals = args.filter((a) => !a.startsWith("--"));
+  // delete takes no flags. Reject them before resolving the selector so a
+  // misspelled guard flag (`--dry-run`) can never be silently dropped.
+  rejectUnknownFlags(args.slice(1), []);
+
+  const positionals = args.filter((a) => !a.startsWith("-"));
   const selector = positionals[1]; // positionals[0] == "delete"
   const extra = positionals[2];
 
@@ -351,7 +417,11 @@ async function deleteGist(args: string[]): Promise<string> {
 // Mirrors cloneRepo exactly: take the selector, shell out, report ok.
 // No target-directory or git-flags passthrough — matches repo clone restraint.
 async function cloneGist(args: string[]): Promise<string> {
-  const positionals = args.filter((a) => !a.startsWith("--"));
+  // clone takes no flags — same rejection as delete, so no git/gh shorthand
+  // slips through as the selector.
+  rejectUnknownFlags(args.slice(1), []);
+
+  const positionals = args.filter((a) => !a.startsWith("-"));
   const selector = positionals[1]; // positionals[0] == "clone"
   const extra = positionals[2];
 
@@ -412,13 +482,7 @@ async function createGist(args: string[]): Promise<string> {
   // forwarded as file paths. -p is especially dangerous: it reaches gh as the
   // --public flag, creating a public gist while the wrapper reports secret.
   const remaining = args.slice(1);
-  const unknownFlags = remaining.filter((a) => a.startsWith("-"));
-  if (unknownFlags.length > 0) {
-    throw new AxiError(
-      `Unknown flag(s): ${unknownFlags.join(", ")}`,
-      "VALIDATION_ERROR",
-    );
-  }
+  rejectUnknownFlags(remaining, []);
   const positionals = remaining.filter((a) => !a.startsWith("-"));
 
   // Mixing the two file-on-disk input forms is a hard error.
@@ -471,7 +535,9 @@ async function createGist(args: string[]): Promise<string> {
         ],
       );
     }
-    const content = await readStdin();
+    const content = await readRequiredStdin(
+      `echo 'content' | gh-axi gist create --filename <name> --public`,
+    );
     ghArgs.push("--filename", filename);
     // No ctx — gist is user-scoped; buildArgs must not append --repo.
     stdout = await ghExecWithStdin(ghArgs, content);
@@ -596,7 +662,9 @@ async function editGist(args: string[]): Promise<string> {
     // and opens $EDITOR instead — verified against a live gist.
     const ghArgs = ["gist", "edit", id, "-", "--filename", filenameFlag];
     if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
-    const content = await readStdin();
+    const content = await readRequiredStdin(
+      "Example: echo 'content' | gh-axi gist edit <id|url> --filename <name>",
+    );
     await ghExecWithStdin(ghArgs, content);
   } else if (addFlag !== undefined && wantsStdin) {
     // Add a brand-new file from piped stdin, signalled by the explicit `-`.
@@ -611,7 +679,9 @@ async function editGist(args: string[]): Promise<string> {
     }
     const ghArgs = ["gist", "edit", id, "--add", addFlag, "-"];
     if (descFlag !== undefined) ghArgs.push("--desc", descFlag);
-    const content = await readStdin();
+    const content = await readRequiredStdin(
+      "Example: echo 'content' | gh-axi gist edit <id|url> --add <name> -",
+    );
     await ghExecWithStdin(ghArgs, content);
   } else if (
     descFlag !== undefined &&
